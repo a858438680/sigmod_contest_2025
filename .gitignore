@@ -1,0 +1,7 @@
+/.vscode
+/build
+/imdb
+*.exe
+*.db
+/*.csv
+/*.txt
