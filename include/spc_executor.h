@@ -64,6 +64,14 @@ public:
 
     const std::vector<Attribute>& attributes() { return attributes_; }
 
+    size_t number_rows() {
+        return this->data_.size();
+    }
+
+    size_t number_cols() {
+        return this->attributes_.size();
+    }
+
     void print() {
         namespace ranges = std::ranges;
         namespace views  = std::views;

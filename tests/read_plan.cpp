@@ -8,8 +8,66 @@ using json = nlohmann::json;
 
 // 属性查找表
 std::unordered_map<std::string, std::vector<Attribute>> attributes_map = {
+    {"aka_name",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "person_id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::VARCHAR, "name_pcode_cf"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "surname_pcode"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"aka_title",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::VARCHAR, "title"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::INT32, "kind_id"},
+            {DataType::INT32, "production_year"},
+            {DataType::VARCHAR, "phonetic_code"},
+            {DataType::INT32, "episode_of_id"},
+            {DataType::INT32, "season_nr"},
+            {DataType::INT32, "episode_nr"},
+            {DataType::VARCHAR, "note"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"cast_info",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "person_id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "person_role_id"},
+            {DataType::VARCHAR, "note"},
+            {DataType::INT32, "nr_order"},
+            {DataType::INT32, "role_id"}}                                     },
+    {"char_name",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::INT32, "imdb_id"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "surname_pcode"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"comp_cast_type",  {{DataType::INT32, "id"}, {DataType::VARCHAR, "kind"}}},
+    {"company_name",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "country_code"},
+            {DataType::INT32, "imdb_id"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "name_pcode_sf"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
     {"company_type",    {{DataType::INT32, "id"}, {DataType::VARCHAR, "kind"}}},
+    {"complete_cast",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "subject_id"},
+            {DataType::INT32, "status_id"}}                                   },
     {"info_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "info"}}},
+    {"keyword",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "keyword"},
+            {DataType::VARCHAR, "phonetic_code"}}                             },
+    {"kind_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "kind"}}},
+    {"link_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "link"}}},
     {"movie_companies",
      {{DataType::INT32, "id"},
             {DataType::INT32, "movie_id"},
@@ -22,6 +80,26 @@ std::unordered_map<std::string, std::vector<Attribute>> attributes_map = {
             {DataType::INT32, "info_type_id"},
             {DataType::VARCHAR, "info"},
             {DataType::VARCHAR, "note"}}                                      },
+    {"movie_keyword",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "keyword_id"}}                                  },
+    {"movie_link",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "linked_movie_id"},
+            {DataType::INT32, "link_type_id"}}                                },
+    {"name",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::INT32, "imdb_id"},
+            {DataType::VARCHAR, "gender"},
+            {DataType::VARCHAR, "name_pcode_cf"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "surname_pcode"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"role_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "role"}}},
     {"title",
      {{DataType::INT32, "id"},
             {DataType::VARCHAR, "title"},
@@ -34,7 +112,19 @@ std::unordered_map<std::string, std::vector<Attribute>> attributes_map = {
             {DataType::INT32, "season_nr"},
             {DataType::INT32, "episode_nr"},
             {DataType::VARCHAR, "series_years"},
-            {DataType::VARCHAR, "md5sum"}}                                    }
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"movie_info",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "info_type_id"},
+            {DataType::VARCHAR, "info"},
+            {DataType::VARCHAR, "note"}}                                      },
+    {"person_info",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "person_id"},
+            {DataType::INT32, "info_type_id"},
+            {DataType::VARCHAR, "info"},
+            {DataType::VARCHAR, "note"}}                                      }
 };
 
 const Attribute* find_attribute(Table& table, const std::string& attr_name) {
@@ -116,10 +206,10 @@ void delete_plan_node(PlanNode* node) {
     delete node;                   // 最后删除当前节点
 }
 
-int main() {
+int main(int argc, char* argv[]) {
     // 加载JSON
-    FILE*                        file       = fopen("tasks/1a.json", "rb");
-    json                         query_plan = json::parse(file);
+    FILE* file       = fopen(std::format("tasks/{}.json", argv[1]).c_str(), "rb");
+    json  query_plan = json::parse(file);
     std::map<std::string, Table> tables;
 
     // 构建执行计划
@@ -131,6 +221,7 @@ int main() {
     auto end     = std::chrono::steady_clock::now();
 
     results.print();
+    std::println("{}, {}", results.number_rows(), results.number_cols());
     std::println("{}", std::chrono::duration_cast<std::chrono::milliseconds>(end - start));
 
     delete_plan_node(root);
