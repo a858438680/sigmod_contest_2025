@@ -38,4 +38,6 @@ private:
     bool              quoted_{false};
     bool              after_field_sep_{false};
     bool              after_record_sep_{false};
+    bool              escaping_{false};
+    bool              newlining_{false};
 };
