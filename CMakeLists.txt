@@ -31,6 +31,13 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(re2)
 
+FetchContent_Declare(
+    json
+    URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+)
+
+FetchContent_MakeAvailable(json)
+
 add_library(contest
     STATIC
     src/build_table.cpp
@@ -41,6 +48,12 @@ add_library(contest
 target_include_directories(contest PUBLIC include)
 target_link_libraries(contest PUBLIC re2)
 target_compile_definitions(contest PUBLIC -D_CRT_SECURE_NO_WARNINGS)
+
+add_executable(
+    read_plan
+    tests/read_plan.cpp
+)
+target_link_libraries(read_plan PRIVATE contest nlohmann_json::nlohmann_json)
 
 add_executable(
     join

@@ -1,0 +1,70 @@
+{
+    "Node Type": "Nested Loop",
+    "Left": {
+        "Node Type": "Hash Join",
+        "Build Side": "Right",
+        "Left": {
+            "Node Type": "Hash Join",
+            "Build Side": "Right",
+            "Left": {
+                "Node Type": "Scan",
+                "Relation Name": "movie_companies",
+                "Filter": "note not like '%(as Metro-Goldwyn-Mayer Pictures)%' and (note like '%(co-production)%' or note like '%(presents)%')"
+            },
+            "Right": {
+                "Node Type": "Hash Join",
+                "Build Side": "Right",
+                "Left": {
+                    "Node Type": "Scan",
+                    "Relation Name": "movie_info_idx"
+                },
+                "Right": {
+                    "Node Type": "Scan",
+                    "Relation Name": "info_type",
+                    "Filter": "info = 'top 250 rank'"
+                },
+                "Left Attr": {
+                    "Table": "movie_info_idx",
+                    "Attr": "info_type_id"
+                },
+                "Right Attr": {
+                    "Table": "info_type",
+                    "Attr": "id"
+                }
+            },
+            "Left Attr": {
+                "Table": "movie_companies",
+                "Attr": "movie_id"
+            },
+            "Right Attr": {
+                "Table": "movie_info_idx",
+                "Attr": "movie_id"
+            }
+        },
+        "Right": {
+            "Node Type": "Scan",
+            "Relation Name": "company_type",
+            "Filter": "kind = 'production companies'"
+        },
+        "Left Attr": {
+            "Table": "movie_companies",
+            "Attr": "company_type_id"
+        },
+        "Right Attr": {
+            "Table": "company_type",
+            "Attr": "id"
+        }
+    },
+    "Right": {
+        "Node Type": "Scan",
+        "Relation Name": "title"
+    },
+    "Left Attr": {
+        "Table": "movie_companies",
+        "Attr": "movie_id"
+    },
+    "Right Attr": {
+        "Table": "title",
+        "Attr": "id"
+    }
+}
