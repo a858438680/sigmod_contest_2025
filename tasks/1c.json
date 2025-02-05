@@ -10,7 +10,7 @@
             "Left": {
                 "Node Type": "Scan",
                 "Relation Name": "movie_companies",
-                "Filter": "note not like '%(as Metro-Goldwyn-Mayer Pictures)%' and (note like '%(co-production)%' or note like '%(presents)%')"
+                "Filter": "note not like '%(as Metro-Goldwyn-Mayer Pictures)%' and note like '%(co-production)%'"
             },
             "Right": {
                 "Node Type": "Hash Join",
@@ -58,7 +58,8 @@
     },
     "Right": {
         "Node Type": "Scan",
-        "Relation Name": "title"
+        "Relation Name": "title",
+        "Filter": "production_year > 2010"
     },
     "Left Attr": {
         "Table": "movie_companies",

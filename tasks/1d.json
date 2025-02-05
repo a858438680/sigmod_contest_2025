@@ -10,7 +10,7 @@
             "Left": {
                 "Node Type": "Scan",
                 "Relation Name": "movie_companies",
-                "Filter": "note not like '%(as Metro-Goldwyn-Mayer Pictures)%' and (note like '%(co-production)%' or note like '%(presents)%')"
+                "Filter": "note not like '%(as Metro-Goldwyn-Mayer Pictures)%'"
             },
             "Right": {
                 "Node Type": "Hash Join",
@@ -22,7 +22,7 @@
                 "Right": {
                     "Node Type": "Scan",
                     "Relation Name": "info_type",
-                    "Filter": "info = 'top 250 rank'"
+                    "Filter": "info = 'bottom 10 rank'"
                 },
                 "Left Attr": {
                     "Table": "movie_info_idx",
@@ -58,7 +58,8 @@
     },
     "Right": {
         "Node Type": "Scan",
-        "Relation Name": "title"
+        "Relation Name": "title",
+        "Filter": "production_year > 2000"
     },
     "Left Attr": {
         "Table": "movie_companies",

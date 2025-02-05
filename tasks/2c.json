@@ -1,0 +1,70 @@
+{
+    "Node Type": "Hash Join",
+    "Build Side": "Right",
+    "Left": {
+        "Node Type": "Hash Join",
+        "Build Side": "Right",
+        "Left": {
+            "Node Type": "Scan",
+            "Relation Name": "movie_companies"
+        },
+        "Right": {
+            "Node Type": "Hash Join",
+            "Build Side": "Right",
+            "Left": {
+                "Node Type": "Scan",
+                "Relation Name": "movie_keyword"
+            },
+            "Right": {
+                "Node Type": "Scan",
+                "Relation Name": "keyword",
+                "Filter": "keyword = 'character-name-in-title'"
+            },
+            "Left Attr": {
+                "Table": "movie_keyword",
+                "Attr": "keyword_id"
+            },
+            "Right Attr": {
+                "Table": "keyword",
+                "Attr": "id"
+            }
+        },
+        "Left Attr": {
+            "Table": "movie_companies",
+            "Attr": "movie_id"
+        },
+        "Right Attr": {
+            "Table": "movie_keyword",
+            "Attr": "movie_id"
+        }
+    },
+    "Right": {
+        "Node Type": "Hash Join",
+        "Build Side": "Right",
+        "Left": {
+            "Node Type": "Scan",
+            "Relation Name": "title"
+        },
+        "Right": {
+            "Node Type": "Scan",
+            "Relation Name": "company_name",
+            "Filter": "country_code = '[sm]'"
+        },
+        "Left Attr": {
+            "Table": "title",
+            "Attr": "id"
+        },
+        "Right Attr": {
+            "Table": "company_name",
+            "Attr": "id"
+        }
+    },
+    "Left Attr": {
+        "Table": "movie_companies",
+        "Attr": "movie_id"
+    },
+    "Right Attr": {
+        "Table": "title",
+        "Attr": "id"
+    }
+}

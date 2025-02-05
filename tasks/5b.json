@@ -1,0 +1,71 @@
+{
+    "Node Type": "Hash Join",
+    "Build Side": "Right",
+    "Left": {
+        "Node Type": "Hash Join",
+        "Build Side": "Right",
+        "Left": {
+            "Node Type": "Scan",
+            "Relation Name": "movie_info",
+            "Filter": "info = 'USA' OR info = 'America'"
+        },
+        "Right": {
+            "Node Type": "Nested Loop",
+            "Left": {
+                "Node Type": "Hash Join",
+                "Build Side": "Right",
+                "Left": {
+                    "Node Type": "Scan",
+                    "Relation Name": "movie_companies",
+                    "Filter": "note like '%(VHS)%' and note like '%(USA)%' and note like '%(1994)%'"
+                },
+                "Right": {
+                    "Node Type": "Scan",
+                    "Relation Name": "company_type",
+                    "Filter": "kind = 'production companies'"
+                },
+                "Left Attr": {
+                    "Table": "movie_companies",
+                    "Attr": "company_type_id"
+                },
+                "Right Attr": {
+                    "Table": "company_type",
+                    "Attr": "id"
+                }
+            },
+            "Right": {
+                "Node Type": "Scan",
+                "Relation Name": "title",
+                "Filter": "production_year > 2010"
+            },
+            "Left Attr": {
+                "Table": "movie_companies",
+                "Attr": "movie_id"
+            },
+            "Right Attr": {
+                "Table": "title",
+                "Attr": "id"
+            }
+        },
+        "Left Attr": {
+            "Table": "movie_info",
+            "Attr": "movie_id"
+        },
+        "Right Attr": {
+            "Table": "title",
+            "Attr": "id"
+        }
+    },
+    "Right": {
+        "Node Type": "Scan",
+        "Relation Name": "info_type"
+    },
+    "Left Attr": {
+        "Table": "movie_info",
+        "Attr": "info_type_id"
+    },
+    "Right Attr": {
+        "Table": "info_type",
+        "Attr": "id"
+    }
+}

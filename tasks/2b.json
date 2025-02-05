@@ -9,27 +9,26 @@
             "Build Side": "Right",
             "Left": {
                 "Node Type": "Scan",
-                "Relation Name": "movie_companies",
-                "Filter": "note not like '%(as Metro-Goldwyn-Mayer Pictures)%' and (note like '%(co-production)%' or note like '%(presents)%')"
+                "Relation Name": "movie_companies"
             },
             "Right": {
                 "Node Type": "Hash Join",
                 "Build Side": "Right",
                 "Left": {
                     "Node Type": "Scan",
-                    "Relation Name": "movie_info_idx"
+                    "Relation Name": "movie_keyword"
                 },
                 "Right": {
                     "Node Type": "Scan",
-                    "Relation Name": "info_type",
-                    "Filter": "info = 'top 250 rank'"
+                    "Relation Name": "keyword",
+                    "Filter": "keyword = 'character-name-in-title'"
                 },
                 "Left Attr": {
-                    "Table": "movie_info_idx",
-                    "Attr": "info_type_id"
+                    "Table": "movie_keyword",
+                    "Attr": "keyword_id"
                 },
                 "Right Attr": {
-                    "Table": "info_type",
+                    "Table": "keyword",
                     "Attr": "id"
                 }
             },
@@ -38,21 +37,21 @@
                 "Attr": "movie_id"
             },
             "Right Attr": {
-                "Table": "movie_info_idx",
+                "Table": "movie_keyword",
                 "Attr": "movie_id"
             }
         },
         "Right": {
             "Node Type": "Scan",
-            "Relation Name": "company_type",
-            "Filter": "kind = 'production companies'"
+            "Relation Name": "company_name",
+            "Filter": "country_code = '[nl]'"
         },
         "Left Attr": {
             "Table": "movie_companies",
-            "Attr": "company_type_id"
+            "Attr": "company_id"
         },
         "Right Attr": {
-            "Table": "company_type",
+            "Table": "company_name",
             "Attr": "id"
         }
     },
