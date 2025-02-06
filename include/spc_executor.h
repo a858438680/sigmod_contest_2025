@@ -64,13 +64,9 @@ public:
 
     const std::vector<Attribute>& attributes() { return attributes_; }
 
-    size_t number_rows() {
-        return this->data_.size();
-    }
+    size_t number_rows() { return this->data_.size(); }
 
-    size_t number_cols() {
-        return this->attributes_.size();
-    }
+    size_t number_cols() { return this->attributes_.size(); }
 
     void print() {
         namespace ranges = std::ranges;
@@ -81,11 +77,11 @@ public:
             std::string escaped;
             for (char c: s) {
                 switch (c) {
-                case '"':  escaped += "\\\""; break; // 转义双引号
-                case '\\': escaped += "\\\\"; break; // 转义反斜杠
-                case '\n': escaped += "\\n"; break;  // 转义换行符
-                case '\r': escaped += "\\r"; break;  // 转义回车符
-                case '\t': escaped += "\\t"; break;  // 转义制表符
+                case '"':  escaped += "\\\""; break;
+                case '\\': escaped += "\\\\"; break;
+                case '\n': escaped += "\\n"; break;
+                case '\r': escaped += "\\r"; break;
+                case '\t': escaped += "\\t"; break;
                 default:   escaped += c; break;
                 }
             }

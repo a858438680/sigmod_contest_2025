@@ -6,7 +6,6 @@
 
 using json = nlohmann::json;
 
-// 属性查找表
 std::unordered_map<std::string, std::vector<Attribute>> attributes_map = {
     {"aka_name",
      {{DataType::INT32, "id"},
@@ -150,11 +149,11 @@ PlanNode* parse_node(const json& j, std::map<std::string, Table>& tables) {
         } else {
             throw std::runtime_error(std::format("No such join: {}", type));
         }
-        // 递归解析子树
+        // analzye sub trees recursively
         node->left  = parse_node(j["Left"], tables);
         node->right = parse_node(j["Right"], tables);
 
-        // 处理连接属性
+        // process joining conditions
         auto get_attr = [&tables](const json& attr_j) -> const Attribute* {
             std::string tbl  = attr_j["Table"];
             std::string attr = attr_j["Attr"];
@@ -168,7 +167,7 @@ PlanNode* parse_node(const json& j, std::map<std::string, Table>& tables) {
         node->leftAttr  = get_attr(j["Left Attr"]);
         node->rightAttr = get_attr(j["Right Attr"]);
 
-        // 处理Hash Join属性
+        // process build side
         if (type == "Hash Join") {
             node->build_left = j["Build Side"] == "Left";
         }
@@ -182,11 +181,11 @@ PlanNode* parse_node(const json& j, std::map<std::string, Table>& tables) {
         std::string                csv_path = std::format("imdb/{}.csv", rel_name);
         std::shared_ptr<Statement> filter;
 
-        if (j.contains("Filter")) {
+        if (j.contains("Filter") and not j["Filter"].is_null()) {
             filter = build_statement(j["Filter"].get<std::string>());
         }
 
-        // 创建Table对象
+        // create Table object
         auto table      = Table::from_csv(attributes_map[rel_name], csv_path, filter.get());
         auto [itr, _]   = tables.emplace(rel_name, std::move(table));
         node->baseTable = &itr->second;
@@ -201,25 +200,26 @@ void delete_plan_node(PlanNode* node) {
     if (!node) {
         return;
     }
-    delete_plan_node(node->left);  // 先删除左子树
-    delete_plan_node(node->right); // 再删除右子树
-    delete node;                   // 最后删除当前节点
+    delete_plan_node(node->left);
+    delete_plan_node(node->right);
+    delete node;
 }
 
 int main(int argc, char* argv[]) {
-    // 加载JSON
+    // load plan json
     FILE* file       = fopen(std::format("tasks/{}.json", argv[1]).c_str(), "rb");
     json  query_plan = json::parse(file);
     std::map<std::string, Table> tables;
 
-    // 构建执行计划
+    // build Plan from json
     PlanNode* root = parse_node(query_plan, tables);
 
-    // 执行查询
+    // execute the plan and time
     auto start   = std::chrono::steady_clock::now();
     auto results = root->execute();
     auto end     = std::chrono::steady_clock::now();
 
+    // print results
     results.print();
     std::println("{}, {}", results.number_rows(), results.number_cols());
     std::println("{}", std::chrono::duration_cast<std::chrono::milliseconds>(end - start));

@@ -51,9 +51,9 @@ std::unique_ptr<Comparison> Parser::parseComparison() {
     consume();
 
     Comparison::Op                                         op;
-    std::variant<int, double, std::string, std::monostate> value;
+    std::variant<int64_t, double, std::string, std::monostate> value;
 
-    // 处理操作符
+    // process operand
     if (current().type >= Token::EQ && current().type <= Token::GEQ) {
         op = convertCompareOp(current().type);
         consume();
@@ -87,10 +87,10 @@ std::unique_ptr<Comparison> Parser::parseComparison() {
         throw std::runtime_error("Invalid comparison operator");
     }
 
-    // 处理操作数
+    // processs operand
     if (op != Comparison::IS_NULL && op != Comparison::IS_NOT_NULL) {
         switch (current().type) {
-        case Token::LITERAL_INT:    value = get<int>(current().value); break;
+        case Token::LITERAL_INT:    value = get<int64_t>(current().value); break;
         case Token::LITERAL_FLOAT:  value = get<double>(current().value); break;
         case Token::LITERAL_STRING: value = get<std::string>(current().value); break;
         default:                    throw std::runtime_error("Expected literal value");

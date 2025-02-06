@@ -2,7 +2,7 @@
 
 #include <statement.h>
 
-// 示例用法
+// example usage
 int main(int argc, char* argv[]) {
     try {
         std::string input = argv[1];

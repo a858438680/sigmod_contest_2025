@@ -11,13 +11,13 @@
 #include <re2/re2.h>
 
 using Data = std::variant<int32_t, int64_t, double, std::string, std::monostate>;
+using Literal = std::variant<int64_t, double, std::string, std::monostate>;
 
 struct Attribute;
 struct Statement;
 struct Comparison;
 struct LogicalOperation;
 
-// Token类型定义
 struct Token {
     enum Type {
         LPAREN,
@@ -33,7 +33,7 @@ struct Token {
         GEQ,
         LIKE,
         IS,
-        NULL_VAL, // 新增Token类型
+        NULL_VAL,
         IDENTIFIER,
         LITERAL_STRING,
         LITERAL_INT,
@@ -43,10 +43,10 @@ struct Token {
 
     Type                                                   type;
     std::string                                            lexeme;
-    std::variant<int, double, std::string, std::monostate> value; // 包含monostate
+    Literal value;
 };
 
-// AST节点定义
+// AST Node
 struct Statement {
     virtual ~Statement()                                   = default;
     virtual std::string pretty_print(int indent = 0) const = 0;
@@ -66,15 +66,15 @@ struct Comparison: Statement {
         LIKE,
         NOT_LIKE,
         IS_NULL,
-        IS_NOT_NULL // 新增操作类型
+        IS_NOT_NULL
     };
 
     Op                                                     op;
-    std::variant<int, double, std::string, std::monostate> value;
+    Literal value;
 
     Comparison(std::string                                     col,
         Op                                                     o,
-        std::variant<int, double, std::string, std::monostate> val)
+        Literal val)
     : column(std::move(col))
     , op(o)
     , value(std::move(val)) {}
@@ -121,13 +121,13 @@ private:
     }
 
     static bool like_match(const std::string& str, const std::string& pattern) {
-        // 静态缓存和互斥锁
+        // static cache and mutex
         static std::mutex cache_mutex;
         static auto       regex_cache = std::unordered_map<std::string, std::shared_ptr<RE2>>{};
 
         std::shared_ptr<RE2> re;
 
-        // 检查缓存
+        // check cache
         {
             std::lock_guard<std::mutex> lock(cache_mutex);
             auto                        it = regex_cache.find(pattern);
@@ -136,9 +136,9 @@ private:
             }
         }
 
-        // 未命中缓存则编译并缓存
+        // cache miss and compile
         if (!re) {
-            // 将 SQL 通配符转换为正则表达式字符串
+            // conver to regex
             std::string regex_str;
             for (char c: pattern) {
                 if (c == '%') {
@@ -146,7 +146,7 @@ private:
                 } else if (c == '_') {
                     regex_str += '.';
                 } else {
-                    // 转义正则特殊字符
+                    // escape sepcical characters
                     if (c == '\\' || c == '.' || c == '^' || c == '$' || c == '|' || c == '?'
                         || c == '*' || c == '+' || c == '(' || c == ')' || c == '[' || c == ']'
                         || c == '{' || c == '}' || c == ' ') {
@@ -157,14 +157,13 @@ private:
             }
 
             RE2::Options options;
-            // options.set_case_sensitive(false); // 忽略大小写
 
             auto new_re = std::make_shared<RE2>(regex_str, options);
             if (!new_re->ok()) {
-                return false; // 正则表达式无效
+                return false; // invalid regex
             }
 
-            // 双检锁避免重复插入
+            // avoid duplicate insertion
             std::lock_guard<std::mutex> lock(cache_mutex);
             if (auto itr = regex_cache.find(pattern); itr == regex_cache.end()) {
                 auto [it, _] = regex_cache.emplace(pattern, new_re);
@@ -174,7 +173,7 @@ private:
             }
         }
 
-        // 执行完全匹配
+        // execute full match
         return RE2::FullMatch(str, *re);
     }
 
@@ -191,8 +190,8 @@ private:
     }
 
     static std::optional<double> get_numeric_value(
-        const std::variant<int, double, std::string, std::monostate>& value) {
-        if (auto* i = std::get_if<int>(&value)) {
+        const Literal& value) {
+        if (auto* i = std::get_if<int64_t>(&value)) {
             return *i;
         } else if (auto* d = std::get_if<double>(&value)) {
             return *d;
@@ -262,7 +261,6 @@ struct LogicalOperation: Statement {
     bool eval(std::span<Attribute> attributes, std::span<Data> record) const override;
 };
 
-// 词法分析器
 class Lexer {
     std::string input;
     size_t      pos = 0;
@@ -284,7 +282,7 @@ class Lexer {
     }
 
     std::string readString() {
-        consume(); // 跳过起始'
+        consume(); // skip begin
         size_t start = pos;
         while (peek() != '\'') {
             if (peek() == '\0') {
@@ -293,7 +291,7 @@ class Lexer {
             consume();
         }
         std::string str = input.substr(start, pos - start);
-        consume(); // 跳过结束'
+        consume(); // skip end
         return str;
     }
 
@@ -414,7 +412,6 @@ public:
     }
 };
 
-// 语法解析器
 class Parser {
     std::vector<Token> tokens;
     size_t             pos = 0;
