@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(GCC_TRUNK_LIB_DIR "/home/alan/gcc-trunk/lib64")
+add_link_options("-Wl,-rpath,${GCC_TRUNK_LIB_DIR}")
 # add_compile_options()
 
 Include(FetchContent)
@@ -42,7 +44,7 @@ FetchContent_MakeAvailable(json)
 
 FetchContent_Declare(
     sql-parser
-    URL https://github.com/a858438680/sql-parser/archive/refs/tags/win-port.tar.gz
+    URL https://github.com/a858438680/sql-parser/archive/refs/tags/win-port-1.tar.gz
 )
 set(HSQL_ENABLE_WERROR OFF)
 FetchContent_MakeAvailable(sql-parser)
