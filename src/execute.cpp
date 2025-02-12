@@ -86,11 +86,20 @@ ExecuteResult execute_hash_join(const Plan&          plan,
             }
         }
     };
-    switch (std::get<1>(left_types[join.left_attr])) {
-    case DataType::INT32:   join_algorithm.template operator()<int32_t>(); break;
-    case DataType::INT64:   join_algorithm.template operator()<int64_t>(); break;
-    case DataType::FP64:    join_algorithm.template operator()<double>(); break;
-    case DataType::VARCHAR: join_algorithm.template operator()<std::string>(); break;
+    if (join.build_left) {
+        switch (std::get<1>(left_types[join.left_attr])) {
+        case DataType::INT32:   join_algorithm.template operator()<int32_t>(); break;
+        case DataType::INT64:   join_algorithm.template operator()<int64_t>(); break;
+        case DataType::FP64:    join_algorithm.template operator()<double>(); break;
+        case DataType::VARCHAR: join_algorithm.template operator()<std::string>(); break;
+        }
+    } else {
+        switch (std::get<1>(right_types[join.right_attr])) {
+        case DataType::INT32:   join_algorithm.template operator()<int32_t>(); break;
+        case DataType::INT64:   join_algorithm.template operator()<int64_t>(); break;
+        case DataType::FP64:    join_algorithm.template operator()<double>(); break;
+        case DataType::VARCHAR: join_algorithm.template operator()<std::string>(); break;
+        }
     }
 
     return results;
