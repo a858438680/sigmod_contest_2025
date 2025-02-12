@@ -1,0 +1,949 @@
+#include <array>
+#include <format>
+#include <memory>
+#include <unordered_map>
+
+#include <plan.h>
+#include <table.h>
+#include <table_entity.h>
+
+#include <nlohmann/json.hpp>
+
+#include "util/sqlhelper.h"
+#include <SQLParser.h>
+
+using json = nlohmann::json;
+
+// 属性查找表
+std::unordered_map<std::string, std::vector<Attribute>> attributes_map = {
+    {"aka_name",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "person_id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::VARCHAR, "name_pcode_cf"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "surname_pcode"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"aka_title",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::VARCHAR, "title"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::INT32, "kind_id"},
+            {DataType::INT32, "production_year"},
+            {DataType::VARCHAR, "phonetic_code"},
+            {DataType::INT32, "episode_of_id"},
+            {DataType::INT32, "season_nr"},
+            {DataType::INT32, "episode_nr"},
+            {DataType::VARCHAR, "note"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"cast_info",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "person_id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "person_role_id"},
+            {DataType::VARCHAR, "note"},
+            {DataType::INT32, "nr_order"},
+            {DataType::INT32, "role_id"}}                                     },
+    {"char_name",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::INT32, "imdb_id"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "surname_pcode"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"comp_cast_type",  {{DataType::INT32, "id"}, {DataType::VARCHAR, "kind"}}},
+    {"company_name",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "country_code"},
+            {DataType::INT32, "imdb_id"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "name_pcode_sf"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"company_type",    {{DataType::INT32, "id"}, {DataType::VARCHAR, "kind"}}},
+    {"complete_cast",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "subject_id"},
+            {DataType::INT32, "status_id"}}                                   },
+    {"info_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "info"}}},
+    {"keyword",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "keyword"},
+            {DataType::VARCHAR, "phonetic_code"}}                             },
+    {"kind_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "kind"}}},
+    {"link_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "link"}}},
+    {"movie_companies",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "company_id"},
+            {DataType::INT32, "company_type_id"},
+            {DataType::VARCHAR, "note"}}                                      },
+    {"movie_info_idx",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "info_type_id"},
+            {DataType::VARCHAR, "info"},
+            {DataType::VARCHAR, "note"}}                                      },
+    {"movie_keyword",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "keyword_id"}}                                  },
+    {"movie_link",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "linked_movie_id"},
+            {DataType::INT32, "link_type_id"}}                                },
+    {"name",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "name"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::INT32, "imdb_id"},
+            {DataType::VARCHAR, "gender"},
+            {DataType::VARCHAR, "name_pcode_cf"},
+            {DataType::VARCHAR, "name_pcode_nf"},
+            {DataType::VARCHAR, "surname_pcode"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"role_type",       {{DataType::INT32, "id"}, {DataType::VARCHAR, "role"}}},
+    {"title",
+     {{DataType::INT32, "id"},
+            {DataType::VARCHAR, "title"},
+            {DataType::VARCHAR, "imdb_index"},
+            {DataType::INT32, "kind_id"},
+            {DataType::INT32, "production_year"},
+            {DataType::INT32, "imdb_id"},
+            {DataType::VARCHAR, "phonetic_code"},
+            {DataType::INT32, "episode_of_id"},
+            {DataType::INT32, "season_nr"},
+            {DataType::INT32, "episode_nr"},
+            {DataType::VARCHAR, "series_years"},
+            {DataType::VARCHAR, "md5sum"}}                                    },
+    {"movie_info",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "movie_id"},
+            {DataType::INT32, "info_type_id"},
+            {DataType::VARCHAR, "info"},
+            {DataType::VARCHAR, "note"}}                                      },
+    {"person_info",
+     {{DataType::INT32, "id"},
+            {DataType::INT32, "person_id"},
+            {DataType::INT32, "info_type_id"},
+            {DataType::VARCHAR, "info"},
+            {DataType::VARCHAR, "note"}}                                      }
+};
+
+using OutputAttrsType = std::vector<std::tuple<TableEntity, std::string>>;
+using AliasMapType    = std::unordered_map<std::string, TableEntity>;
+using FilterMapType   = std::unordered_map<TableEntity, std::unique_ptr<Statement>>;
+using JoinGraphType   = std::unordered_map<TableEntity,
+      std::unordered_map<TableEntity, std::tuple<std::string, std::string>>>;
+
+bool only_contains_hash_join(const json& node) {
+    std::string_view node_type = node["Node Type"].get<std::string_view>();
+    if (node_type == "Nested Loop" or node_type == "Merge Join") {
+        return false;
+    }
+    if (node.contains("nodes")) {
+        for (auto& child: node["Plans"]) {
+            if (not only_contains_hash_join(child)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+Plan load_join_pipeline(const json& node,
+    const AliasMapType&             alias_map,
+    const FilterMapType&            filters,
+    const JoinGraphType&            join_graph) {
+    namespace ranges = std::ranges;
+    namespace views  = std::views;
+    namespace fs     = std::filesystem;
+    static std::unordered_set<std::string_view> other_operators{"Aggregate", "Gather"};
+    static std::unordered_set<std::string_view> join_types{"Nested Loop",
+        "Hash Join",
+        "Merge Join"};
+    static std::unordered_set<std::string_view> scan_types{"Seq Scan"};
+    Plan                                        ret;
+
+    auto recurse =
+        [&](this auto&& recurse,
+            const json& node) -> std::tuple<size_t,
+                                  std::unordered_set<TableEntity>,
+                                  std::vector<std::tuple<TableEntity, std::string>>> {
+        auto node_type = node["Node Type"].get<std::string_view>();
+
+        if (auto itr = other_operators.find(node_type); itr != other_operators.end()) {
+            return recurse(node["Plans"][0]);
+        } else if (auto itr = join_types.find(node_type); itr != join_types.end()) {
+            if (node_type != "Hash Join") {
+                throw std::runtime_error("Not Hash Join");
+            }
+            auto   left_type  = node["Plans"][0]["Node Type"].get<std::string_view>();
+            auto   right_type = node["Plans"][1]["Node Type"].get<std::string_view>();
+            bool   build_left;
+            size_t left, right;
+            size_t left_attr, right_attr;
+            std::unordered_set<TableEntity>                   left_entities, right_entities;
+            std::vector<std::tuple<TableEntity, std::string>> left_columns, right_columns;
+            if (left_type == "Hash" and right_type != "Hash") {
+                build_left = true;
+                std::tie(left, left_entities, left_columns) =
+                    recurse(node["Plans"][0]["Plans"][0]);
+                std::tie(right, right_entities, right_columns) = recurse(node["Plans"][1]);
+            } else if (left_type != "Hash" and right_type == "Hash") {
+                build_left                                  = false;
+                std::tie(left, left_entities, left_columns) = recurse(node["Plans"][0]);
+                std::tie(right, right_entities, right_columns) =
+                    recurse(node["Plans"][1]["Plans"][0]);
+            } else {
+                throw std::runtime_error("Hash Join should have at least one Hash child");
+            }
+            auto&       left_node            = ret.nodes[left];
+            auto&       right_node           = ret.nodes[right];
+            bool        found_join_condition = false;
+            TableEntity left_entity, right_entity;
+            std::string left_column, right_column;
+            for (auto& entity: left_entities) {
+                if (auto itr = join_graph.find(entity); itr != join_graph.end()) {
+                    for (auto& [adj, columns]: itr->second) {
+                        if (auto iter = right_entities.find(adj);
+                            iter != right_entities.end()) {
+                            left_entity                         = entity;
+                            right_entity                        = adj;
+                            std::tie(left_column, right_column) = columns;
+                            found_join_condition                = true;
+                        }
+                    }
+                }
+            }
+            if (not found_join_condition) {
+                std::println(stderr, "left entities:");
+                for (auto& entity: left_entities) {
+                    std::println(stderr, "    {}", entity);
+                }
+                std::println(stderr, "right entities:");
+                for (auto& entity: right_entities) {
+                    std::println(stderr, "    {}", entity);
+                }
+                throw std::runtime_error("Cannot find join condition");
+            }
+            std::println("{}.{} = {}.{}", left_entity, left_column, right_entity, right_column);
+            size_t idx = 0;
+            std::println("left:");
+            bool left_attr_set = false, right_attr_set = false;
+            for (auto& [entity, column]: left_columns) {
+                std::println("    {}.{}", entity, column);
+                if (entity == left_entity and column == left_column) {
+                    left_attr     = idx;
+                    left_attr_set = true;
+                    break;
+                }
+                ++idx;
+            }
+            idx = 0;
+            std::println("right:");
+            for (auto& [entity, column]: right_columns) {
+                std::println("    {}.{}", entity, column);
+                if (entity == right_entity and column == right_column) {
+                    right_attr     = idx;
+                    right_attr_set = true;
+                    break;
+                }
+                ++idx;
+            }
+            if (not left_attr_set or not right_attr_set) {
+                throw std::runtime_error("Join conditions are not set properly");
+            }
+            auto output_attrs =
+                views::zip(views::iota(0zu),
+                    views::concat(left_node.output_attrs, right_node.output_attrs)
+                        | views::transform([](const auto& value) {
+                              auto [_, data_type] = value;
+                              return data_type;
+                          }))
+                | ranges::to<std::vector<std::tuple<size_t, DataType>>>();
+            auto new_node_id = ret.new_join_node(build_left,
+                left,
+                right,
+                left_attr,
+                right_attr,
+                std::move(output_attrs));
+            left_entities.merge(std::move(right_entities));
+            left_columns.insert(left_columns.end(),
+                std::make_move_iterator(right_columns.begin()),
+                std::make_move_iterator(right_columns.end()));
+            return {new_node_id, std::move(left_entities), std::move(left_columns)};
+        } else if (auto itr = scan_types.find(node_type); itr != scan_types.end()) {
+            if (not node.contains("Alias")) {
+                throw std::runtime_error("No \"Alias\" in scan node");
+            }
+            auto        alias = node["Alias"].get<std::string>();
+            TableEntity entity;
+            if (auto itr = alias_map.find(alias); itr != alias_map.end()) {
+                entity = itr->second;
+            } else {
+                throw std::runtime_error(std::format("Cannot find alias: {}", alias));
+            }
+            std::vector<Attribute>* pattributes;
+            if (auto itr = attributes_map.find(entity.table); itr != attributes_map.end()) {
+                pattributes = &itr->second;
+            } else {
+                throw std::runtime_error(
+                    std::format("Cannot find attributes for table: {}", entity.table));
+            }
+            Statement* filter = nullptr;
+            if (auto itr = filters.find(entity); itr != filters.end()) {
+                filter = itr->second.get();
+            }
+            auto table        = Table::from_csv(*pattributes,
+                fs::path("imdb") / std::format("{}.csv", entity.table),
+                filter);
+            auto new_input_id = ret.new_input(table.to_columnar());
+            // auto new_input_id = ret.new_table(std::move(table));
+            auto output_attrs = views::zip(views::iota(0zu),
+                                    *pattributes | views::transform([](const Attribute& value) {
+                                        return value.type;
+                                    }))
+                              | ranges::to<std::vector<std::tuple<size_t, DataType>>>();
+            auto new_node_id = ret.new_scan_node(new_input_id, std::move(output_attrs));
+            std::unordered_set<TableEntity> entities{entity};
+            auto                            columns =
+                *pattributes
+                | views::transform(
+                    [&](const Attribute& value) -> std::tuple<TableEntity, std::string> {
+                        return {entity, value.name};
+                    })
+                | ranges::to<std::vector<std::tuple<TableEntity, std::string>>>();
+            return {new_node_id, std::move(entities), std::move(columns)};
+        } else {
+            throw std::runtime_error(std::format("Not supported node type: {}", node_type));
+        }
+    };
+
+    std::tie(ret.root, std::ignore, std::ignore) = recurse(node);
+    return ret;
+}
+
+namespace std {
+
+template <>
+struct formatter<hsql::ExprType> {
+    template <class ParseContext>
+    constexpr auto parse(ParseContext& ctx) {
+        return ctx.begin();
+    }
+
+    template <class FormatContext>
+    auto format(hsql::ExprType value, FormatContext& ctx) const {
+        static std::array<std::string_view, 17> names{
+            "kExprLiteralFloat",
+            "kExprLiteralString",
+            "kExprLiteralInt",
+            "kExprLiteralNull",
+            "kExprLiteralDate",
+            "kExprLiteralInterval",
+            "kExprStar",
+            "kExprParameter",
+            "kExprColumnRef",
+            "kExprFunctionRef",
+            "kExprOperator",
+            "kExprSelect",
+            "kExprHint",
+            "kExprArray",
+            "kExprArrayIndex",
+            "kExprExtract",
+            "kExprCast",
+        };
+        return std::format_to(ctx.out(), "{}", names[int(value)]);
+    }
+};
+
+template <>
+struct formatter<hsql::OperatorType> {
+    template <class ParseContext>
+    constexpr auto parse(ParseContext& ctx) {
+        return ctx.begin();
+    }
+
+    template <class FormatContext>
+    auto format(hsql::OperatorType value, FormatContext& ctx) const {
+        static std::array<std::string_view, 27> names{
+            "kOpNone",
+
+            // Ternary operator
+            "kOpBetween",
+
+            // n-nary special case
+            "kOpCase",
+            "kOpCaseListElement", // `WHEN expr THEN expr`
+
+            // Binary operators.
+            "kOpPlus",
+            "kOpMinus",
+            "kOpAsterisk",
+            "kOpSlash",
+            "kOpPercentage",
+            "kOpCaret",
+
+            "kOpEquals",
+            "kOpNotEquals",
+            "kOpLess",
+            "kOpLessEq",
+            "kOpGreater",
+            "kOpGreaterEq",
+            "kOpLike",
+            "kOpNotLike",
+            "kOpILike",
+            "kOpAnd",
+            "kOpOr",
+            "kOpIn",
+            "kOpConcat",
+
+            // Unary operators.
+            "kOpNot",
+            "kOpUnaryMinus",
+            "kOpIsNull",
+            "kOpExists",
+        };
+        return std::format_to(ctx.out(), "{}", names[int(value)]);
+    }
+};
+
+} // namespace std
+
+std::tuple<std::string, TableEntity> extract_column_and_table(hsql::Expr* expr,
+    const std::unordered_map<std::string, int>&                           table_counts,
+    const std::unordered_map<std::string, std::vector<std::string>>&      column_to_tables,
+    const AliasMapType&                                                   alias_map) {
+    namespace ranges = std::ranges;
+    namespace views  = std::views;
+    using namespace std::string_literals;
+    std::string column = expr->name;
+    TableEntity table_entity;
+    if (expr->hasTable()) {
+        auto table = expr->table;
+        if (auto itr = alias_map.find(table); itr != alias_map.end()) {
+            table_entity = itr->second;
+        } else if (auto itr = table_counts.find(table); itr != table_counts.end()) {
+            auto count = itr->second;
+            if (count == 1) {
+                table_entity = {table, 0};
+            } else {
+                std::println("Ambiguous table: {}", table);
+                exit(1);
+            }
+        } else {
+            std::println("Unknown table name: {}", table);
+            exit(1);
+        }
+    } else {
+        if (auto itr = column_to_tables.find(column); itr != column_to_tables.end()) {
+            if (itr->second.size() > 1) {
+                std::println("Ambiguous column: {0}, {1} have column {0}",
+                    column,
+                    itr->second | views::join_with(","s) | ranges::to<std::string>());
+                exit(1);
+            } else {
+                auto& table_name = itr->second[0];
+                if (auto itr = table_counts.find(table_name); itr != table_counts.end()) {
+                    auto count = itr->second;
+                    if (count == 1) {
+                        table_entity = {table_name, 0};
+                    } else {
+                        std::println("Ambiguous table: {}", table_name);
+                        exit(1);
+                    }
+                }
+            }
+        } else {
+            std::println("No such column: {}", column);
+            exit(1);
+        }
+    }
+    return {column, table_entity};
+}
+
+void assert_column(hsql::Expr* expr) {
+    if (expr->type != hsql::kExprColumnRef) {
+        std::println("left side of \"Equals\" condition must be a ColumnRef");
+        exit(1);
+    }
+}
+
+void
+insert_filter(FilterMapType& filters, TableEntity entity, std::unique_ptr<Statement> stmt) {
+    if (auto itr = filters.find(entity); itr == filters.end()) {
+        filters.emplace(std::move(entity), std::move(stmt));
+    } else {
+        auto new_stmt = LogicalOperation::makeAnd(std::move(itr->second), std::move(stmt));
+        itr->second   = std::move(new_stmt);
+    }
+}
+
+// if there is no And, this will cause error
+void parse_expr(hsql::Expr*                                          expr,
+    const std::unordered_map<std::string, int>&                      table_counts,
+    const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
+    const AliasMapType&                                              alias_map,
+    FilterMapType&                                                   filters,
+    JoinGraphType&                                                   join_graph,
+    std::unique_ptr<Statement>*                                      out_statement = nullptr,
+    TableEntity* out_entity                                                        = nullptr,
+    int level                                                                      = 0) {
+    namespace views = std::views;
+    switch (expr->type) {
+    case hsql::kExprOperator: {
+        auto op_type = expr->opType;
+        switch (op_type) {
+        case hsql::kOpAnd:
+        case hsql::kOpOr:  {
+            int add = 0;
+            if (op_type == hsql::kOpAnd) {
+                // std::println("operator And");
+            } else {
+                // std::println("operator Or");
+                add = 1;
+            }
+            std::unique_ptr<Statement> left;
+            TableEntity                left_entity;
+            std::unique_ptr<Statement> right;
+            TableEntity                right_entity;
+            // std::println("parse left");
+            parse_expr(expr->expr,
+                table_counts,
+                column_to_tables,
+                alias_map,
+                filters,
+                join_graph,
+                &left,
+                &left_entity,
+                level + add);
+            // std::println("parse right");
+            parse_expr(expr->expr2,
+                table_counts,
+                column_to_tables,
+                alias_map,
+                filters,
+                join_graph,
+                &right,
+                &right_entity,
+                level + add);
+            if (level == 0 and op_type == hsql::kOpAnd) {
+                // std::println("Top level And");
+                if (left) {
+                    // std::println("insert left");
+                    left->pretty_print();
+                    insert_filter(filters, std::move(left_entity), std::move(left));
+                }
+                if (right) {
+                    // std::println("insert right: {}", (void*)right.get());
+                    right->pretty_print();
+                    insert_filter(filters, std::move(right_entity), std::move(right));
+                }
+            } else {
+                if (!left or !right) {
+                    std::println("Non top level contains join condition instead of filter");
+                    exit(1);
+                }
+                if (left_entity != right_entity) {
+                    std::println("Filter can not be pushed down");
+                    exit(1);
+                }
+                if (op_type == hsql::kOpAnd) {
+                    *out_statement =
+                        LogicalOperation::makeAnd(std::move(left), std::move(right));
+                } else {
+                    *out_statement =
+                        LogicalOperation::makeOr(std::move(left), std::move(right));
+                }
+                *out_entity = left_entity;
+            }
+            break;
+        }
+        case hsql::kOpNot: {
+            // std::println("operator Not");
+            // std::println("parse child");
+            std::unique_ptr<Statement> child;
+            TableEntity                child_entity;
+            parse_expr(expr->expr,
+                table_counts,
+                column_to_tables,
+                alias_map,
+                filters,
+                join_graph,
+                &child,
+                &child_entity,
+                level + 1);
+            *out_statement = LogicalOperation::makeNot(std::move(child));
+            *out_entity    = std::move(child_entity);
+            break;
+        }
+        case hsql::kOpLess:
+        case hsql::kOpLessEq:
+        case hsql::kOpGreater:
+        case hsql::kOpGreaterEq:
+        case hsql::kOpEquals:
+        case hsql::kOpNotEquals: {
+            Comparison::Op op;
+            // switch (op_type) {
+            // case hsql::kOpLess:      std::println("operator Less"); break;
+            // case hsql::kOpLessEq:    std::println("operator LessEq"); break;
+            // case hsql::kOpGreater:   std::println("operator Greater"); break;
+            // case hsql::kOpGreaterEq: std::println("operator GreaterEq"); break;
+            // case hsql::kOpEquals:    std::println("operator Equals"); break;
+            // case hsql::kOpNotEquals: std::println("operator Not Equals"); break;
+            // default:                 std::unreachable();
+            // }
+            switch (op_type) {
+            case hsql::kOpLess:      op = Comparison::Op::LT; break;
+            case hsql::kOpLessEq:    op = Comparison::Op::LEQ; break;
+            case hsql::kOpGreater:   op = Comparison::Op::GT; break;
+            case hsql::kOpGreaterEq: op = Comparison::Op::GEQ; break;
+            case hsql::kOpEquals:    op = Comparison::Op::EQ; break;
+            case hsql::kOpNotEquals: op = Comparison::Op::NEQ; break;
+            default:                 std::unreachable();
+            }
+            auto left  = expr->expr;
+            auto right = expr->expr2;
+            assert_column(left);
+            auto [left_column, left_entity] =
+                extract_column_and_table(left, table_counts, column_to_tables, alias_map);
+            // std::println("left_column: {}", left_column);
+            // std::println("left_table: {}", left_table);
+            Literal value;
+            switch (right->type) {
+            case hsql::kExprLiteralInt: {
+                // std::println("int literal: {}", right->ival);
+                value = right->ival;
+                break;
+            }
+            case hsql::kExprLiteralString: {
+                // std::println("string literal: {}", right->name);
+                value = right->name;
+                break;
+            }
+            case hsql::kExprColumnRef: {
+                auto [right_column, right_entity] =
+                    extract_column_and_table(right, table_counts, column_to_tables, alias_map);
+                if (op_type != hsql::kOpEquals) {
+                    std::println("Non-EuqalJoins are not supported");
+                    exit(1);
+                }
+                if (auto itr = join_graph.find(left_entity); itr != join_graph.end()) {
+                    if (auto iter = itr->second.find(right_entity); iter != itr->second.end()) {
+                        std::println("At least two conditions between a same pair of tables.");
+                        exit(1);
+                    }
+                    itr->second.emplace(right_entity, std::tuple{left_column, right_column});
+                } else {
+                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
+                        adj_item;
+                    adj_item.emplace(right_entity, std::tuple{left_column, right_column});
+                    join_graph.emplace(left_entity, std::move(adj_item));
+                }
+                if (auto itr = join_graph.find(right_entity); itr != join_graph.end()) {
+                    itr->second.emplace(left_entity, std::tuple{right_column, left_column});
+                } else {
+                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
+                        adj_item;
+                    adj_item.emplace(left_entity, std::tuple{right_column, left_column});
+                    join_graph.emplace(right_entity, std::move(adj_item));
+                }
+                // std::println("right_column: {}", right_column);
+                // std::println("right_table: {}", right_table);
+                break;
+            }
+            default: std::println("Expression type: {} not processed", right->type); exit(1);
+            }
+            if (right->type != hsql::kExprColumnRef) {
+                *out_statement =
+                    std::make_unique<Comparison>(std::move(left_column), op, std::move(value));
+                *out_entity = std::move(left_entity);
+            }
+            break;
+        }
+        case hsql::kOpLike:
+        case hsql::kOpNotLike: {
+            Comparison::Op op;
+            if (op_type == hsql::kOpLike) {
+                op = Comparison::Op::LIKE;
+                // std::println("operator Like");
+            } else {
+                op = Comparison::Op::NOT_LIKE;
+                // std::println("operator Not Like");
+            }
+            auto left  = expr->expr;
+            auto right = expr->expr2;
+            assert_column(left);
+            auto [left_column, left_entity] =
+                extract_column_and_table(left, table_counts, column_to_tables, alias_map);
+            // std::println("left_column: {}", left_column);
+            // std::println("left_table: {}", left_table);
+            switch (right->type) {
+            case hsql::kExprLiteralString: {
+                std::println("string literal: {}", right->name);
+                Literal value = right->name;
+                *out_statement =
+                    std::make_unique<Comparison>(std::move(left_column), op, std::move(value));
+                *out_entity = std::move(left_entity);
+                break;
+            }
+            default: std::println("Expression type: {} not processed", right->type); exit(1);
+            }
+            break;
+        }
+        case hsql::kOpBetween: {
+            // std::println("operator Between");
+            auto  left = expr->expr;
+            auto& list = *expr->exprList;
+            assert_column(left);
+            auto [left_column, left_entity] =
+                extract_column_and_table(left, table_counts, column_to_tables, alias_map);
+            // std::println("left_column: {}", left_column);
+            // std::println("left_table: {}", left_table);
+            Literal values[2];
+            for (auto [idx, item]: list | views::enumerate) {
+                switch (item->type) {
+                case hsql::kExprLiteralInt: {
+                    // std::println("item {}: int literal: {}", idx, item->ival);
+                    values[idx] = item->ival;
+                    break;
+                }
+                case hsql::kExprLiteralString: {
+                    // std::println("item {}: string literal: {}", idx, item->name);
+                    values[idx] = item->name;
+                    break;
+                }
+                default: std::println("Expression type: {} not processed", item->type); exit(1);
+                }
+            }
+            auto stmt1     = std::make_unique<Comparison>(left_column,
+                Comparison::Op::GEQ,
+                std::move(values[0]));
+            auto stmt2     = std::make_unique<Comparison>(left_column,
+                Comparison::Op::LEQ,
+                std::move(values[1]));
+            *out_statement = LogicalOperation::makeAnd(std::move(stmt1), std::move(stmt2));
+            *out_entity    = std::move(left_entity);
+            break;
+        }
+        case hsql::kOpIn: {
+            // std::println("operator In");
+            auto  left = expr->expr;
+            auto& list = *expr->exprList;
+            assert_column(left);
+            auto [left_column, left_entity] =
+                extract_column_and_table(left, table_counts, column_to_tables, alias_map);
+            // std::println("left_column: {}", left_column);
+            // std::println("left_table: {}", left_table);
+            for (auto [idx, item]: list | views::enumerate) {
+                Literal value;
+                switch (item->type) {
+                case hsql::kExprLiteralInt: {
+                    // std::println("item {}: int literal: {}", idx, item->ival);
+                    value = item->ival;
+                    break;
+                }
+                case hsql::kExprLiteralString: {
+                    // std::println("item {}: string literal: {}", idx, item->name);
+                    value = item->name;
+                    break;
+                }
+                default: std::println("Expression type: {} not processed", item->type); exit(1);
+                }
+                if (not*out_statement) {
+                    *out_statement = std::make_unique<Comparison>(left_column,
+                        Comparison::Op::EQ,
+                        std::move(value));
+                } else {
+                    auto new_stmt  = std::make_unique<Comparison>(left_column,
+                        Comparison::Op::EQ,
+                        std::move(value));
+                    *out_statement = LogicalOperation::makeOr(std::move(*out_statement),
+                        std::move(new_stmt));
+                }
+            }
+            *out_entity = std::move(left_entity);
+            break;
+        }
+        case hsql::kOpIsNull: {
+            // std::println("operator IsNull");
+            auto child = expr->expr;
+            assert_column(child);
+            auto [child_column, child_entity] =
+                extract_column_and_table(child, table_counts, column_to_tables, alias_map);
+            // std::println("child_column: {}", child_column);
+            // std::println("child_table: {}", child_table);
+            *out_statement = std::make_unique<Comparison>(std::move(child_column),
+                Comparison::Op::IS_NULL,
+                std::monostate{});
+            *out_entity    = std::move(child_entity);
+            break;
+        }
+        default: {
+            std::println("Operator type: {} not processed", op_type);
+            exit(1);
+        }
+        }
+        break;
+    }
+    default: {
+        std::println("Expression type: {} not processed", expr->type);
+        exit(1);
+    }
+    }
+}
+
+int main(int argc, char* argv[]) {
+    namespace views = std::views;
+    try {
+        // column to table map
+        std::unordered_map<std::string, std::vector<std::string>> column_to_tables;
+
+        for (auto& [table_name, attributes]: attributes_map) {
+            for (auto& [_, attribute_name]: attributes) {
+                if (auto itr = column_to_tables.find(attribute_name);
+                    itr == column_to_tables.end()) {
+                    column_to_tables.emplace(attribute_name,
+                        std::vector<std::string>{table_name});
+                } else {
+                    itr->second.push_back(table_name);
+                }
+            }
+        }
+
+        // load plan json
+        namespace fs  = std::filesystem;
+        auto sql_path = fs::path("job") / std::format("{}.sql", argv[1]);
+        auto sql      = read_file(sql_path);
+        std::println("{}", sql);
+        hsql::SQLParserResult sql_result;
+        hsql::SQLParser::parse(sql, &sql_result);
+
+        if (not sql_result.isValid()) {
+            throw std::runtime_error(std::format("Error parsing SQL: {}", sql_path.string()));
+        }
+
+        // std::println("Parsed successfully!");
+        // std::println("Number of statements: {}", sql_result.size());
+
+        // for (auto i = 0zu; i < sql_result.size(); ++i) {
+        //     hsql::printStatementInfo(sql_result.getStatement(i));
+        // }
+        std::unordered_map<std::string, int> table_counts;
+        AliasMapType                         alias_map;
+        JoinGraphType                        join_graph;
+        FilterMapType                        filters;
+        OutputAttrsType                      output_attrs;
+        auto statement = (const hsql::SelectStatement*)sql_result.getStatement(0);
+
+        auto fromTable = statement->fromTable;
+        if (fromTable->type != hsql::kTableCrossProduct) {
+            throw std::runtime_error("SQL not supported");
+        }
+        auto fromTableList = fromTable->list;
+        for (auto table: *fromTableList) {
+            if (table->type != hsql::kTableName) {
+                throw std::runtime_error("SQL not supported");
+            }
+            auto table_itr = table_counts.find(table->name);
+            if (table_itr == table_counts.end()) {
+                bool _;
+                std::tie(table_itr, _) = table_counts.emplace(table->name, 1);
+            } else {
+                ++(table_itr->second);
+            }
+            auto alias = table->alias;
+            if (alias) {
+                alias_map.emplace(alias->name, TableEntity{table->name, table_itr->second - 1});
+            }
+        }
+
+        auto& selectList = *statement->selectList;
+        for (auto* expr: selectList) {
+            switch (expr->type) {
+            case (hsql::kExprFunctionRef): {
+                for (auto* child: *expr->exprList) {
+                    std::println("Child: {}", child->type);
+                    if (child->type != hsql::kExprColumnRef) {
+                        throw std::runtime_error(
+                            "Complex select expressions are not supported");
+                    }
+                    auto [column, entity] = extract_column_and_table(child,
+                        table_counts,
+                        column_to_tables,
+                        alias_map);
+                    output_attrs.emplace_back(entity, column);
+                }
+                break;
+            }
+            default: {
+                throw std::runtime_error(
+                    std::format("Not supported expression type in select list: {}.",
+                        expr->type));
+                break;
+            }
+            }
+        }
+        std::println("");
+        for (auto& [key, value]: alias_map) {
+            std::println("{}: {}", key, value);
+        }
+        auto condition = statement->whereClause;
+        parse_expr(condition, table_counts, column_to_tables, alias_map, filters, join_graph);
+        std::println("");
+        for (auto& [table, statement]: filters) {
+            std::println("{}:\n{}", table, statement->pretty_print());
+        }
+        std::println("");
+        for (auto& [left_entity, adj]: join_graph) {
+            std::println("{}:", left_entity);
+            for (auto& [right_entity, columns]: adj) {
+                auto& [left_column, right_column] = columns;
+                std::println("    {}: ({}, {})", right_entity, left_column, right_column);
+            }
+        }
+
+        // File names_file(fs::path("datasets") / "imdb" / "JOB" / "Bao" / "names.json", "rb");
+        // json names = json::parse(names_file);
+        File file("plans.json", "rb");
+        json query_plans = json::parse(file);
+        auto names       = query_plans["names"].get<std::vector<std::string>>();
+        std::map<std::string, size_t> name_to_idx;
+        for (auto&& [idx, name]: names | views::enumerate) {
+            name_to_idx.emplace(name, idx);
+        }
+        auto idx = 0zu;
+        if (auto itr = name_to_idx.find(argv[1]); itr != name_to_idx.end()) {
+            idx = itr->second;
+        } else {
+            throw std::runtime_error(std::format("Cannot find query: {}", argv[1]));
+        }
+        const auto& plan_json = query_plans["plans"][idx];
+        if (only_contains_hash_join(plan_json["Plan"])) {
+            std::println("{}", plan_json["Plan"].dump(4));
+        } else {
+            throw std::runtime_error("Plan contains non-hash joins");
+        }
+
+        auto plan = load_join_pipeline(plan_json["Plan"], alias_map, filters, join_graph);
+
+        std::println("pipeline loaded");
+
+        auto start   = std::chrono::steady_clock::now();
+        auto results = Contest::execute(plan);
+        auto end     = std::chrono::steady_clock::now();
+
+        std::println("results: {}", results.num_rows);
+        std::println("{}ms",
+            std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+    } catch (std::exception& e) {
+        std::println(stderr, "Error: {}", e.what());
+        exit(EXIT_FAILURE);
+    }
+}
