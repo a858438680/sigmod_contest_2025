@@ -186,22 +186,43 @@ Table Table::from_columnar(const ColumnarTable& table) {
                 break;
             }
             case DataType::VARCHAR: {
-                auto  num_rows     = *reinterpret_cast<uint16_t*>(page);
-                auto  num_non_null = *reinterpret_cast<uint16_t*>(page + 2);
-                auto* offset_begin = reinterpret_cast<uint16_t*>(page + 4);
-                auto* data_begin   = reinterpret_cast<char*>(page + 4 + num_non_null * 2);
-                auto* string_begin = data_begin;
-                auto* bitmap =
-                    reinterpret_cast<uint8_t*>(page + PAGE_SIZE - (num_rows + 7) / 8);
-                uint16_t data_idx = 0;
-                for (uint16_t i = 0; i < num_rows; ++i) {
-                    if (get_bitmap(bitmap, i)) {
-                        auto        offset = offset_begin[data_idx++];
-                        std::string value{string_begin, data_begin + offset};
-                        string_begin = data_begin + offset;
-                        new_column.emplace_back(std::move(value));
-                    } else {
-                        new_column.emplace_back(std::monostate{});
+                auto num_rows = *reinterpret_cast<uint16_t*>(page);
+                if (num_rows == 0xffff) {
+                    auto        num_chars  = *reinterpret_cast<uint16_t*>(page + 2);
+                    auto*       data_begin = reinterpret_cast<char*>(page + 4);
+                    std::string value{data_begin, data_begin + num_chars};
+                    new_column.emplace_back(std::move(value));
+                } else if (num_rows == 0xfffe) {
+                    auto  num_chars  = *reinterpret_cast<uint16_t*>(page + 2);
+                    auto* data_begin = reinterpret_cast<char*>(page + 4);
+                    std::visit(
+                        [data_begin, num_chars](auto& value) {
+                            using T = std::decay_t<decltype(value)>;
+                            if constexpr (std::is_same_v<T, std::string>) {
+                                value.insert(value.end(), data_begin, data_begin + num_chars);
+                            } else {
+                                throw std::runtime_error(
+                                    "long string page 0xfffe must follows a string");
+                            }
+                        },
+                        new_column.back());
+                } else {
+                    auto  num_non_null = *reinterpret_cast<uint16_t*>(page + 2);
+                    auto* offset_begin = reinterpret_cast<uint16_t*>(page + 4);
+                    auto* data_begin   = reinterpret_cast<char*>(page + 4 + num_non_null * 2);
+                    auto* string_begin = data_begin;
+                    auto* bitmap =
+                        reinterpret_cast<uint8_t*>(page + PAGE_SIZE - (num_rows + 7) / 8);
+                    uint16_t data_idx = 0;
+                    for (uint16_t i = 0; i < num_rows; ++i) {
+                        if (get_bitmap(bitmap, i)) {
+                            auto        offset = offset_begin[data_idx++];
+                            std::string value{string_begin, data_begin + offset};
+                            string_begin = data_begin + offset;
+                            new_column.emplace_back(std::move(value));
+                        } else {
+                            new_column.emplace_back(std::monostate{});
+                        }
                     }
                 }
                 break;
@@ -388,6 +409,23 @@ ColumnarTable Table::to_columnar() const {
             data.reserve(8192);
             offsets.reserve(4096);
             bitmap.reserve(512);
+            auto save_long_string = [&column](std::string_view data) {
+                auto offset     = 0zu;
+                auto first_page = true;
+                while (offset < data.size()) {
+                    auto* page = column.new_page()->data;
+                    if (first_page) {
+                        *reinterpret_cast<uint16_t*>(page) = 0xffff;
+                        first_page                         = false;
+                    } else {
+                        *reinterpret_cast<uint16_t*>(page) = 0xfffe;
+                    }
+                    auto page_data_len = std::min(data.size() - offset, PAGE_SIZE - 4);
+                    *reinterpret_cast<uint16_t*>(page + 2) = page_data_len;
+                    memcpy(page + 4, data.data() + offset, page_data_len);
+                    offset += page_data_len;
+                }
+            };
             auto save_page = [&column, &num_rows, &data, &offsets, &bitmap]() {
                 auto* page                             = column.new_page()->data;
                 *reinterpret_cast<uint16_t*>(page)     = num_rows;
@@ -403,24 +441,31 @@ ColumnarTable Table::to_columnar() const {
             for (auto& record: table) {
                 auto& value = record[col_idx];
                 std::visit(
-                    [&save_page, &column, &num_rows, &data, &offsets, &bitmap](
-                        const auto& value) {
+                    [&save_long_string,
+                        &save_page,
+                        &column,
+                        &num_rows,
+                        &data,
+                        &offsets,
+                        &bitmap](const auto& value) {
                         using T = std::decay_t<decltype(value)>;
                         if constexpr (std::is_same_v<T, std::string>) {
                             if (value.size() > PAGE_SIZE - 7) {
-                                throw std::runtime_error(std::format(
-                                    "string longer than {} characters is not supported",
-                                    PAGE_SIZE - 7));
+                                if (num_rows > 0) {
+                                    save_page();
+                                }
+                                save_long_string(value);
+                            } else {
+                                if (4 + (offsets.size() + 1) * 2 + (data.size() + value.size())
+                                        + (num_rows / 8 + 1)
+                                    > PAGE_SIZE) {
+                                    save_page();
+                                }
+                                set_bitmap(bitmap, num_rows);
+                                data.insert(data.end(), value.begin(), value.end());
+                                offsets.emplace_back(data.size());
+                                ++num_rows;
                             }
-                            if (4 + (offsets.size() + 1) * 2 + (data.size() + value.size())
-                                    + (num_rows / 8 + 1)
-                                > PAGE_SIZE) {
-                                save_page();
-                            }
-                            set_bitmap(bitmap, num_rows);
-                            data.insert(data.end(), value.begin(), value.end());
-                            offsets.emplace_back(data.size());
-                            ++num_rows;
                         } else if constexpr (std::is_same_v<T, std::monostate>) {
                             if (4 + offsets.size() * 2 + data.size() + (num_rows / 8 + 1)
                                 > PAGE_SIZE) {
