@@ -30,59 +30,91 @@ ExecuteResult execute_hash_join(const Plan&          plan,
         std::unordered_map<T, std::vector<size_t>> hash_table;
         if (build_left) {
             for (auto&& [idx, record]: left | views::enumerate) {
-                auto key = std::get<T>(record[left_col]);
-                if (auto itr = hash_table.find(key); itr == hash_table.end()) {
-                    hash_table.emplace(key, std::vector<size_t>(1, idx));
-                } else {
-                    itr->second.push_back(idx);
-                }
+                std::visit(
+                    [&hash_table, idx](const auto& key) {
+                        using Tk = std::decay_t<decltype(key)>;
+                        if constexpr (std::is_same_v<Tk, T>) {
+                            if (auto itr = hash_table.find(key); itr == hash_table.end()) {
+                                hash_table.emplace(key, std::vector<size_t>(1, idx));
+                            } else {
+                                itr->second.push_back(idx);
+                            }
+                        } else if constexpr (not std::is_same_v<Tk, std::monostate>) {
+                            throw std::runtime_error("wrong type of field");
+                        }
+                    },
+                    record[left_col]);
             }
             for (auto& right_record: right) {
-                auto key = std::get<T>(right_record[right_col]);
-                if (auto itr = hash_table.find(key); itr != hash_table.end()) {
-                    for (auto left_idx: itr->second) {
-                        auto&             left_record = left[left_idx];
-                        std::vector<Data> new_record;
-                        new_record.reserve(output_attrs.size());
-                        for (auto [col_idx, _]: output_attrs) {
-                            if (col_idx < left_record.size()) {
-                                new_record.emplace_back(left_record[col_idx]);
-                            } else {
-                                new_record.emplace_back(
-                                    right_record[col_idx - left_record.size()]);
+                std::visit(
+                    [&](const auto& key) {
+                        using Tk = std::decay_t<decltype(key)>;
+                        if constexpr (std::is_same_v<Tk, T>) {
+                            if (auto itr = hash_table.find(key); itr != hash_table.end()) {
+                                for (auto left_idx: itr->second) {
+                                    auto&             left_record = left[left_idx];
+                                    std::vector<Data> new_record;
+                                    new_record.reserve(output_attrs.size());
+                                    for (auto [col_idx, _]: output_attrs) {
+                                        if (col_idx < left_record.size()) {
+                                            new_record.emplace_back(left_record[col_idx]);
+                                        } else {
+                                            new_record.emplace_back(
+                                                right_record[col_idx - left_record.size()]);
+                                        }
+                                    }
+                                    results.emplace_back(std::move(new_record));
+                                }
                             }
+                        } else if constexpr (not std::is_same_v<Tk, std::monostate>) {
+                            throw std::runtime_error("wrong type of field");
                         }
-                        results.emplace_back(std::move(new_record));
-                    }
-                }
+                    },
+                    right_record[right_col]);
             }
         } else {
             for (auto&& [idx, record]: right | views::enumerate) {
-                auto key = std::get<T>(record[right_col]);
-                if (auto itr = hash_table.find(key); itr == hash_table.end()) {
-                    hash_table.emplace(key, std::vector<size_t>(1, idx));
-                } else {
-                    itr->second.push_back(idx);
-                }
+                std::visit(
+                    [&hash_table, idx](const auto& key) {
+                        using Tk = std::decay_t<decltype(key)>;
+                        if constexpr (std::is_same_v<Tk, T>) {
+                            if (auto itr = hash_table.find(key); itr == hash_table.end()) {
+                                hash_table.emplace(key, std::vector<size_t>(1, idx));
+                            } else {
+                                itr->second.push_back(idx);
+                            }
+                        } else if constexpr (not std::is_same_v<Tk, std::monostate>) {
+                            throw std::runtime_error("wrong type of field");
+                        }
+                    },
+                    record[right_col]);
             }
             for (auto& left_record: left) {
-                auto key = std::get<T>(left_record[left_col]);
-                if (auto itr = hash_table.find(key); itr != hash_table.end()) {
-                    for (auto right_idx: itr->second) {
-                        auto&             right_record = right[right_idx];
-                        std::vector<Data> new_record;
-                        new_record.reserve(output_attrs.size());
-                        for (auto [col_idx, _]: output_attrs) {
-                            if (col_idx < left_record.size()) {
-                                new_record.emplace_back(left_record[col_idx]);
-                            } else {
-                                new_record.emplace_back(
-                                    right_record[col_idx - left_record.size()]);
+                std::visit(
+                    [&](const auto& key) {
+                        using Tk = std::decay_t<decltype(key)>;
+                        if constexpr (std::is_same_v<Tk, T>) {
+                            if (auto itr = hash_table.find(key); itr != hash_table.end()) {
+                                for (auto right_idx: itr->second) {
+                                    auto&             right_record = right[right_idx];
+                                    std::vector<Data> new_record;
+                                    new_record.reserve(output_attrs.size());
+                                    for (auto [col_idx, _]: output_attrs) {
+                                        if (col_idx < left_record.size()) {
+                                            new_record.emplace_back(left_record[col_idx]);
+                                        } else {
+                                            new_record.emplace_back(
+                                                right_record[col_idx - left_record.size()]);
+                                        }
+                                    }
+                                    results.emplace_back(std::move(new_record));
+                                }
                             }
+                        } else if constexpr (not std::is_same_v<Tk, std::monostate>) {
+                            throw std::runtime_error("wrong type of field");
                         }
-                        results.emplace_back(std::move(new_record));
-                    }
-                }
+                    },
+                    left_record[left_col]);
             }
         }
     };
