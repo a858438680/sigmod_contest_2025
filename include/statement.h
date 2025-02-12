@@ -10,7 +10,7 @@
 
 #include <re2/re2.h>
 
-using Data = std::variant<int32_t, int64_t, double, std::string, std::monostate>;
+using Data    = std::variant<int32_t, int64_t, double, std::string, std::monostate>;
 using Literal = std::variant<int64_t, double, std::string, std::monostate>;
 
 struct Attribute;
@@ -41,9 +41,9 @@ struct Token {
         EOI
     };
 
-    Type                                                   type;
-    std::string                                            lexeme;
-    Literal value;
+    Type        type;
+    std::string lexeme;
+    Literal     value;
 };
 
 // AST Node
@@ -69,12 +69,10 @@ struct Comparison: Statement {
         IS_NOT_NULL
     };
 
-    Op                                                     op;
+    Op      op;
     Literal value;
 
-    Comparison(std::string                                     col,
-        Op                                                     o,
-        Literal val)
+    Comparison(std::string col, Op o, Literal val)
     : column(std::move(col))
     , op(o)
     , value(std::move(val)) {}
@@ -189,8 +187,7 @@ private:
         }
     }
 
-    static std::optional<double> get_numeric_value(
-        const Literal& value) {
+    static std::optional<double> get_numeric_value(const Literal& value) {
         if (auto* i = std::get_if<int64_t>(&value)) {
             return *i;
         } else if (auto* d = std::get_if<double>(&value)) {
