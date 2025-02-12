@@ -985,16 +985,18 @@ int main(int argc, char* argv[]) {
         }
 
         // load plan json
-        namespace fs  = std::filesystem;
+        namespace fs = std::filesystem;
 
         File file("plans.json", "rb");
         json query_plans = json::parse(file);
         auto names       = query_plans["names"].get<std::vector<std::string>>();
         auto plans       = query_plans["plans"];
         for (const auto& [name, plan_json]: views::zip(names, plans)) {
-            auto sql_path = fs::path("job") / std::format("{}.sql", name);
-            auto sql      = read_file(sql_path);
-            run(column_to_tables, name, std::move(sql), plan_json);
+            if (argc < 2 or name == argv[1]) {
+                auto sql_path = fs::path("job") / std::format("{}.sql", name);
+                auto sql      = read_file(sql_path);
+                run(column_to_tables, name, std::move(sql), plan_json);
+            }
         }
     } catch (std::exception& e) {
         std::println(stderr, "Error: {}", e.what());
