@@ -165,7 +165,7 @@ Plan load_join_pipeline(const json& node,
     static std::unordered_set<std::string_view> join_types{"Nested Loop",
         "Hash Join",
         "Merge Join"};
-    static std::unordered_set<std::string_view> scan_types{"Seq Scan"};
+    static std::unordered_set<std::string_view> scan_types{"Seq Scan", "Index Only Scan"};
     Plan                                        ret;
 
     auto extract_entities = [&](this auto&& extract_entities,
