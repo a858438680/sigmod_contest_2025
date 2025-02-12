@@ -1,6 +1,8 @@
 #pragma once
 
 #include <filesystem>
+#include <numeric>
+#include <vector>
 
 #include <cstdint>
 #include <cstdlib>
@@ -105,3 +107,16 @@ inline std::string read_file(const std::filesystem::path& path) {
     });
     return result;
 }
+
+struct DSU {
+    std::vector<size_t> pa;
+
+    explicit DSU(size_t size)
+    : pa(size) {
+        std::iota(pa.begin(), pa.end(), 0);
+    }
+
+    size_t find(size_t x) { return pa[x] == x ? x : pa[x] = find(pa[x]); }
+
+    void unite(size_t x, size_t y) { pa[find(x)] = find(y); }
+};

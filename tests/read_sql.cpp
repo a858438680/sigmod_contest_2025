@@ -139,6 +139,7 @@ using AliasMapType    = std::unordered_map<std::string, TableEntity>;
 using FilterMapType   = std::unordered_map<TableEntity, std::unique_ptr<Statement>>;
 using JoinGraphType   = std::unordered_map<TableEntity,
       std::unordered_map<TableEntity, std::tuple<std::string, std::string>>>;
+using ColumnMapType = std::unordered_map<TableEntity, std::unordered_map<std::string, size_t>>;
 
 bool only_contains_hash_join(const json& node) {
     std::string_view node_type = node["Node Type"].get<std::string_view>();
@@ -573,8 +574,9 @@ void parse_expr(hsql::Expr*                                          expr,
     const std::unordered_map<std::string, int>&                      table_counts,
     const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
     const AliasMapType&                                              alias_map,
+    const ColumnMapType&                                             column_map,
     FilterMapType&                                                   filters,
-    JoinGraphType&                                                   join_graph,
+    DSU&                                                             join_union,
     std::unique_ptr<Statement>*                                      out_statement = nullptr,
     TableEntity* out_entity                                                        = nullptr,
     int level                                                                      = 0) {
@@ -601,8 +603,9 @@ void parse_expr(hsql::Expr*                                          expr,
                 table_counts,
                 column_to_tables,
                 alias_map,
+                column_map,
                 filters,
-                join_graph,
+                join_union,
                 &left,
                 &left_entity,
                 level + add);
@@ -611,8 +614,9 @@ void parse_expr(hsql::Expr*                                          expr,
                 table_counts,
                 column_to_tables,
                 alias_map,
+                column_map,
                 filters,
-                join_graph,
+                join_union,
                 &right,
                 &right_entity,
                 level + add);
@@ -656,8 +660,9 @@ void parse_expr(hsql::Expr*                                          expr,
                 table_counts,
                 column_to_tables,
                 alias_map,
+                column_map,
                 filters,
-                join_graph,
+                join_union,
                 &child,
                 &child_entity,
                 level + 1);
@@ -715,28 +720,30 @@ void parse_expr(hsql::Expr*                                          expr,
                 if (op_type != hsql::kOpEquals) {
                     throw std::runtime_error("Non-EuqalJoins are not supported");
                 }
-                if (auto itr = join_graph.find(left_entity); itr != join_graph.end()) {
-                    if (auto iter = itr->second.find(right_entity); iter != itr->second.end()) {
-                        throw std::runtime_error(
-                            "At least two conditions between a same pair of tables.");
+                size_t left_column_idx, right_column_idx;
+                if (auto itr = column_map.find(left_entity); itr != column_map.end()) {
+                    if (auto iter = itr->second.find(left_column); iter != itr->second.end()) {
+                        left_column_idx = iter->second;
+                    } else {
+                        throw std::runtime_error(std::format("No column: {} in table: {}",
+                            left_column,
+                            left_entity));
                     }
-                    itr->second.emplace(right_entity, std::tuple{left_column, right_column});
                 } else {
-                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
-                        adj_item;
-                    adj_item.emplace(right_entity, std::tuple{left_column, right_column});
-                    join_graph.emplace(left_entity, std::move(adj_item));
+                    throw std::runtime_error(std::format("No  table: {}", left_entity));
                 }
-                if (auto itr = join_graph.find(right_entity); itr != join_graph.end()) {
-                    itr->second.emplace(left_entity, std::tuple{right_column, left_column});
+                if (auto itr = column_map.find(right_entity); itr != column_map.end()) {
+                    if (auto iter = itr->second.find(right_column); iter != itr->second.end()) {
+                        right_column_idx = iter->second;
+                    } else {
+                        throw std::runtime_error(std::format("No column: {} in table: {}",
+                            right_column,
+                            right_entity));
+                    }
                 } else {
-                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
-                        adj_item;
-                    adj_item.emplace(left_entity, std::tuple{right_column, left_column});
-                    join_graph.emplace(right_entity, std::move(adj_item));
+                    throw std::runtime_error(std::format("No  table: {}", right_entity));
                 }
-                // std::println("right_column: {}", right_column);
-                // std::println("right_table: {}", right_table);
+                join_union.unite(left_column_idx, right_column_idx);
                 break;
             }
             default:
@@ -897,11 +904,13 @@ void run(const std::unordered_map<std::string, std::vector<std::string>>& column
         throw std::runtime_error(std::format("Error parsing SQL: {}", name));
     }
 
-    std::unordered_map<std::string, int> table_counts;
-    AliasMapType                         alias_map;
-    JoinGraphType                        join_graph;
-    FilterMapType                        filters;
-    OutputAttrsType                      output_attrs;
+    std::unordered_map<std::string, int>              table_counts;
+    AliasMapType                                      alias_map;
+    JoinGraphType                                     join_graph;
+    FilterMapType                                     filters;
+    OutputAttrsType                                   output_attrs;
+    ColumnMapType                                     column_map;
+    std::vector<std::tuple<TableEntity, std::string>> column_vec;
     auto statement = (const hsql::SelectStatement*)sql_result.getStatement(0);
 
     auto fromTable = statement->fromTable;
@@ -909,6 +918,7 @@ void run(const std::unordered_map<std::string, std::vector<std::string>>& column
         throw std::runtime_error("SQL not supported");
     }
     auto fromTableList = fromTable->list;
+    auto column_count  = 0zu;
     for (auto table: *fromTableList) {
         if (table->type != hsql::kTableName) {
             throw std::runtime_error("SQL not supported");
@@ -920,9 +930,20 @@ void run(const std::unordered_map<std::string, std::vector<std::string>>& column
         } else {
             ++(table_itr->second);
         }
+        TableEntity entity{table->name, table_itr->second - 1};
+        auto [itr, _] = column_map.emplace(entity, std::unordered_map<std::string, size_t>{});
+        if (auto attr_itr = attributes_map.find(entity.table);
+            attr_itr != attributes_map.end()) {
+            for (auto& attr: attr_itr->second) {
+                itr->second.emplace(attr.name, column_count++);
+                column_vec.emplace_back(entity, attr.name);
+            }
+        } else {
+            throw std::runtime_error(std::format("No table: {} in schema", entity.table));
+        }
         auto alias = table->alias;
         if (alias) {
-            alias_map.emplace(alias->name, TableEntity{table->name, table_itr->second - 1});
+            alias_map.emplace(alias->name, entity);
         }
     }
 
@@ -949,8 +970,53 @@ void run(const std::unordered_map<std::string, std::vector<std::string>>& column
         }
     }
     auto condition = statement->whereClause;
-    parse_expr(condition, table_counts, column_to_tables, alias_map, filters, join_graph);
+    DSU  join_union(column_count);
+    parse_expr(condition,
+        table_counts,
+        column_to_tables,
+        alias_map,
+        column_map,
+        filters,
+        join_union);
 
+    std::unordered_map<size_t, std::vector<size_t>> joined_columns;
+    for (auto i = 0zu; i < column_count; ++i) {
+        auto set = join_union.find(i);
+        if (auto itr = joined_columns.find(set); itr != joined_columns.end()) {
+            itr->second.emplace_back(i);
+        } else {
+            joined_columns.emplace(set, std::vector<size_t>(1, i));
+        }
+    }
+
+    for (auto& [set, items]: joined_columns) {
+        for (auto i = 0zu; i < items.size() - 1; ++i) {
+            for (auto j = i + 1; j < items.size(); ++j) {
+                auto& [left_entity, left_column]   = column_vec[items[i]];
+                auto& [right_entity, right_column] = column_vec[items[j]];
+                if (auto itr = join_graph.find(left_entity); itr != join_graph.end()) {
+                    if (auto iter = itr->second.find(right_entity); iter != itr->second.end()) {
+                        throw std::runtime_error(
+                            "At least two conditions between a same pair of tables.");
+                    }
+                    itr->second.emplace(right_entity, std::tuple{left_column, right_column});
+                } else {
+                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
+                        adj_item;
+                    adj_item.emplace(right_entity, std::tuple{left_column, right_column});
+                    join_graph.emplace(left_entity, std::move(adj_item));
+                }
+                if (auto itr = join_graph.find(right_entity); itr != join_graph.end()) {
+                    itr->second.emplace(left_entity, std::tuple{right_column, left_column});
+                } else {
+                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
+                        adj_item;
+                    adj_item.emplace(left_entity, std::tuple{right_column, left_column});
+                    join_graph.emplace(right_entity, std::move(adj_item));
+                }
+            }
+        }
+    }
 
     auto plan =
         load_join_pipeline(plan_json["Plan"], alias_map, filters, join_graph, output_attrs);
