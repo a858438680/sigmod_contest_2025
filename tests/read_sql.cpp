@@ -886,6 +886,86 @@ void parse_expr(hsql::Expr*                                          expr,
     }
 }
 
+void run(const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
+    std::string_view                                                      name,
+    std::string                                                           sql,
+    const json&                                                           plan_json) {
+    hsql::SQLParserResult sql_result;
+    hsql::SQLParser::parse(sql, &sql_result);
+
+    if (not sql_result.isValid()) {
+        throw std::runtime_error(std::format("Error parsing SQL: {}", name));
+    }
+
+    std::unordered_map<std::string, int> table_counts;
+    AliasMapType                         alias_map;
+    JoinGraphType                        join_graph;
+    FilterMapType                        filters;
+    OutputAttrsType                      output_attrs;
+    auto statement = (const hsql::SelectStatement*)sql_result.getStatement(0);
+
+    auto fromTable = statement->fromTable;
+    if (fromTable->type != hsql::kTableCrossProduct) {
+        throw std::runtime_error("SQL not supported");
+    }
+    auto fromTableList = fromTable->list;
+    for (auto table: *fromTableList) {
+        if (table->type != hsql::kTableName) {
+            throw std::runtime_error("SQL not supported");
+        }
+        auto table_itr = table_counts.find(table->name);
+        if (table_itr == table_counts.end()) {
+            bool _;
+            std::tie(table_itr, _) = table_counts.emplace(table->name, 1);
+        } else {
+            ++(table_itr->second);
+        }
+        auto alias = table->alias;
+        if (alias) {
+            alias_map.emplace(alias->name, TableEntity{table->name, table_itr->second - 1});
+        }
+    }
+
+    auto& selectList = *statement->selectList;
+    for (auto* expr: selectList) {
+        switch (expr->type) {
+        case (hsql::kExprFunctionRef): {
+            for (auto* child: *expr->exprList) {
+                // std::println("Child: {}", child->type);
+                if (child->type != hsql::kExprColumnRef) {
+                    throw std::runtime_error("Complex select expressions are not supported");
+                }
+                auto [column, entity] =
+                    extract_column_and_table(child, table_counts, column_to_tables, alias_map);
+                output_attrs.emplace_back(entity, column);
+            }
+            break;
+        }
+        default: {
+            throw std::runtime_error(
+                std::format("Not supported expression type in select list: {}.", expr->type));
+            break;
+        }
+        }
+    }
+    auto condition = statement->whereClause;
+    parse_expr(condition, table_counts, column_to_tables, alias_map, filters, join_graph);
+
+
+    auto plan =
+        load_join_pipeline(plan_json["Plan"], alias_map, filters, join_graph, output_attrs);
+
+    auto start   = std::chrono::steady_clock::now();
+    auto results = Contest::execute(plan);
+    auto end     = std::chrono::steady_clock::now();
+
+    // auto result_table = Table::from_columnar(results);
+    // result_table.print();
+    std::println("{} results: {}, {}", name, results.num_rows, results.columns.size());
+    std::println("{}ms",
+        std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+}
+
 int main(int argc, char* argv[]) {
     namespace views = std::views;
     try {
@@ -906,124 +986,16 @@ int main(int argc, char* argv[]) {
 
         // load plan json
         namespace fs  = std::filesystem;
-        auto sql_path = fs::path("job") / std::format("{}.sql", argv[1]);
-        auto sql      = read_file(sql_path);
-        // std::println("{}", sql);
-        hsql::SQLParserResult sql_result;
-        hsql::SQLParser::parse(sql, &sql_result);
-
-        if (not sql_result.isValid()) {
-            throw std::runtime_error(std::format("Error parsing SQL: {}", sql_path.string()));
-        }
-
-        std::unordered_map<std::string, int> table_counts;
-        AliasMapType                         alias_map;
-        JoinGraphType                        join_graph;
-        FilterMapType                        filters;
-        OutputAttrsType                      output_attrs;
-        auto statement = (const hsql::SelectStatement*)sql_result.getStatement(0);
-
-        auto fromTable = statement->fromTable;
-        if (fromTable->type != hsql::kTableCrossProduct) {
-            throw std::runtime_error("SQL not supported");
-        }
-        auto fromTableList = fromTable->list;
-        for (auto table: *fromTableList) {
-            if (table->type != hsql::kTableName) {
-                throw std::runtime_error("SQL not supported");
-            }
-            auto table_itr = table_counts.find(table->name);
-            if (table_itr == table_counts.end()) {
-                bool _;
-                std::tie(table_itr, _) = table_counts.emplace(table->name, 1);
-            } else {
-                ++(table_itr->second);
-            }
-            auto alias = table->alias;
-            if (alias) {
-                alias_map.emplace(alias->name, TableEntity{table->name, table_itr->second - 1});
-            }
-        }
-
-        auto& selectList = *statement->selectList;
-        for (auto* expr: selectList) {
-            switch (expr->type) {
-            case (hsql::kExprFunctionRef): {
-                for (auto* child: *expr->exprList) {
-                    // std::println("Child: {}", child->type);
-                    if (child->type != hsql::kExprColumnRef) {
-                        throw std::runtime_error(
-                            "Complex select expressions are not supported");
-                    }
-                    auto [column, entity] = extract_column_and_table(child,
-                        table_counts,
-                        column_to_tables,
-                        alias_map);
-                    output_attrs.emplace_back(entity, column);
-                }
-                break;
-            }
-            default: {
-                throw std::runtime_error(
-                    std::format("Not supported expression type in select list: {}.",
-                        expr->type));
-                break;
-            }
-            }
-        }
-        // std::println("");
-        // for (auto& [key, value]: alias_map) {
-        //     std::println("{}: {}", key, value);
-        // }
-        auto condition = statement->whereClause;
-        parse_expr(condition, table_counts, column_to_tables, alias_map, filters, join_graph);
-        // std::println("");
-        // for (auto& [table, statement]: filters) {
-        //     std::println("{}:\n{}", table, statement->pretty_print());
-        // }
-        // std::println("");
-        // for (auto& [left_entity, adj]: join_graph) {
-        //     std::println("{}:", left_entity);
-        //     for (auto& [right_entity, columns]: adj) {
-        //         auto& [left_column, right_column] = columns;
-        //         std::println("    {}: ({}, {})", right_entity, left_column, right_column);
-        //     }
-        // }
 
         File file("plans.json", "rb");
         json query_plans = json::parse(file);
         auto names       = query_plans["names"].get<std::vector<std::string>>();
-        std::map<std::string, size_t> name_to_idx;
-        for (auto&& [idx, name]: names | views::enumerate) {
-            name_to_idx.emplace(name, idx);
+        auto plans       = query_plans["plans"];
+        for (const auto& [name, plan_json]: views::zip(names, plans)) {
+            auto sql_path = fs::path("job") / std::format("{}.sql", name);
+            auto sql      = read_file(sql_path);
+            run(column_to_tables, name, std::move(sql), plan_json);
         }
-        auto idx = 0zu;
-        if (auto itr = name_to_idx.find(argv[1]); itr != name_to_idx.end()) {
-            idx = itr->second;
-        } else {
-            throw std::runtime_error(std::format("Cannot find query: {}", argv[1]));
-        }
-        const auto& plan_json = query_plans["plans"][idx];
-        // if (only_contains_hash_join(plan_json["Plan"])) {
-        //     std::println("{}", plan_json["Plan"].dump(4));
-        // } else {
-        //     throw std::runtime_error("Plan contains non-hash joins");
-        // }
-
-        auto plan =
-            load_join_pipeline(plan_json["Plan"], alias_map, filters, join_graph, output_attrs);
-
-        // std::println("pipeline loaded");
-
-        auto start   = std::chrono::steady_clock::now();
-        auto results = Contest::execute(plan);
-        auto end     = std::chrono::steady_clock::now();
-
-        auto result_table = Table::from_columnar(results);
-        result_table.print();
-        std::println("results: {}, {}", results.num_rows, results.columns.size());
-        std::println("{}ms",
-            std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
     } catch (std::exception& e) {
         std::println(stderr, "Error: {}", e.what());
         exit(EXIT_FAILURE);
