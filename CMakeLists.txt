@@ -6,10 +6,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-set(GCC_TRUNK_LIB_DIR "/home/alan/gcc-trunk/lib64")
-add_link_options("-Wl,-rpath,${GCC_TRUNK_LIB_DIR}")
-# add_compile_options()
-
 Include(FetchContent)
 
 FetchContent_Declare(
@@ -63,11 +59,11 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(fmtlib)
 
-# FetchContent_Declare(
-#     duckdb
-#     URL https://github.com/duckdb/duckdb/archive/refs/tags/v1.2.0.tar.gz
-# )
-# FetchContent_MakeAvailable(duckdb)
+FetchContent_Declare(
+    duckdb
+    URL https://github.com/duckdb/duckdb/archive/refs/tags/v1.2.0.tar.gz
+)
+FetchContent_MakeAvailable(duckdb)
 
 add_library(contest
     STATIC
@@ -91,7 +87,7 @@ add_executable(
     read_sql
     tests/read_sql.cpp
 )
-target_link_libraries(read_sql PRIVATE contest nlohmann_json::nlohmann_json sqlparser)
+target_link_libraries(read_sql PRIVATE contest nlohmann_json::nlohmann_json sqlparser duckdb)
 
 # add_executable(
 #     join

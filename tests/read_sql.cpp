@@ -565,17 +565,16 @@ insert_filter(FilterMapType& filters, TableEntity entity, std::unique_ptr<Statem
     }
 }
 
-// if there is no And, this will cause error
-void parse_expr(hsql::Expr*                                          expr,
+void parse_expr_impl(hsql::Expr*                                     expr,
     const std::unordered_map<std::string, int>&                      table_counts,
     const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
     const AliasMapType&                                              alias_map,
     const ColumnMapType&                                             column_map,
     FilterMapType&                                                   filters,
     DSU&                                                             join_union,
-    std::unique_ptr<Statement>*                                      out_statement = nullptr,
-    TableEntity* out_entity                                                        = nullptr,
-    int level                                                                      = 0) {
+    std::unique_ptr<Statement>&                                      out_statement,
+    TableEntity&                                                     out_entity,
+    int                                                              level = 0) {
     namespace views = ranges::views;
     switch (expr->type) {
     case hsql::kExprOperator: {
@@ -595,37 +594,37 @@ void parse_expr(hsql::Expr*                                          expr,
             std::unique_ptr<Statement> right;
             TableEntity                right_entity;
             // fmt::println("parse left");
-            parse_expr(expr->expr,
+            parse_expr_impl(expr->expr,
                 table_counts,
                 column_to_tables,
                 alias_map,
                 column_map,
                 filters,
                 join_union,
-                &left,
-                &left_entity,
+                left,
+                left_entity,
                 level + add);
             // fmt::println("parse right");
-            parse_expr(expr->expr2,
+            parse_expr_impl(expr->expr2,
                 table_counts,
                 column_to_tables,
                 alias_map,
                 column_map,
                 filters,
                 join_union,
-                &right,
-                &right_entity,
+                right,
+                right_entity,
                 level + add);
             if (level == 0 and op_type == hsql::kOpAnd) {
                 // fmt::println("Top level And");
                 if (left) {
                     // fmt::println("insert left");
-                    left->pretty_print();
+                    // left->pretty_print();
                     insert_filter(filters, std::move(left_entity), std::move(left));
                 }
                 if (right) {
                     // fmt::println("insert right: {}", (void*)right.get());
-                    right->pretty_print();
+                    // right->pretty_print();
                     insert_filter(filters, std::move(right_entity), std::move(right));
                 }
             } else {
@@ -637,13 +636,12 @@ void parse_expr(hsql::Expr*                                          expr,
                     throw std::runtime_error("Filter can not be pushed down");
                 }
                 if (op_type == hsql::kOpAnd) {
-                    *out_statement =
+                    out_statement =
                         LogicalOperation::makeAnd(std::move(left), std::move(right));
                 } else {
-                    *out_statement =
-                        LogicalOperation::makeOr(std::move(left), std::move(right));
+                    out_statement = LogicalOperation::makeOr(std::move(left), std::move(right));
                 }
-                *out_entity = left_entity;
+                out_entity = left_entity;
             }
             break;
         }
@@ -652,18 +650,18 @@ void parse_expr(hsql::Expr*                                          expr,
             // fmt::println("parse child");
             std::unique_ptr<Statement> child;
             TableEntity                child_entity;
-            parse_expr(expr->expr,
+            parse_expr_impl(expr->expr,
                 table_counts,
                 column_to_tables,
                 alias_map,
                 column_map,
                 filters,
                 join_union,
-                &child,
-                &child_entity,
+                child,
+                child_entity,
                 level + 1);
-            *out_statement = LogicalOperation::makeNot(std::move(child));
-            *out_entity    = std::move(child_entity);
+            out_statement = LogicalOperation::makeNot(std::move(child));
+            out_entity    = std::move(child_entity);
             break;
         }
         case hsql::kOpLess:
@@ -747,9 +745,9 @@ void parse_expr(hsql::Expr*                                          expr,
                     fmt::format("Expression type: {} not processed", right->type));
             }
             if (right->type != hsql::kExprColumnRef) {
-                *out_statement =
+                out_statement =
                     std::make_unique<Comparison>(std::move(left_column), op, std::move(value));
-                *out_entity = std::move(left_entity);
+                out_entity = std::move(left_entity);
             }
             break;
         }
@@ -774,9 +772,9 @@ void parse_expr(hsql::Expr*                                          expr,
             case hsql::kExprLiteralString: {
                 // fmt::println("string literal: {}", right->name);
                 Literal value = right->name;
-                *out_statement =
+                out_statement =
                     std::make_unique<Comparison>(std::move(left_column), op, std::move(value));
-                *out_entity = std::move(left_entity);
+                out_entity = std::move(left_entity);
                 break;
             }
             default:
@@ -812,14 +810,14 @@ void parse_expr(hsql::Expr*                                          expr,
                         fmt::format("Expression type: {} not processed", item->type));
                 }
             }
-            auto stmt1     = std::make_unique<Comparison>(left_column,
+            auto stmt1    = std::make_unique<Comparison>(left_column,
                 Comparison::Op::GEQ,
                 std::move(values[0]));
-            auto stmt2     = std::make_unique<Comparison>(left_column,
+            auto stmt2    = std::make_unique<Comparison>(left_column,
                 Comparison::Op::LEQ,
                 std::move(values[1]));
-            *out_statement = LogicalOperation::makeAnd(std::move(stmt1), std::move(stmt2));
-            *out_entity    = std::move(left_entity);
+            out_statement = LogicalOperation::makeAnd(std::move(stmt1), std::move(stmt2));
+            out_entity    = std::move(left_entity);
             break;
         }
         case hsql::kOpIn: {
@@ -848,19 +846,19 @@ void parse_expr(hsql::Expr*                                          expr,
                     throw std::runtime_error(
                         fmt::format("Expression type: {} not processed", item->type));
                 }
-                if (not*out_statement) {
-                    *out_statement = std::make_unique<Comparison>(left_column,
+                if (not out_statement) {
+                    out_statement = std::make_unique<Comparison>(left_column,
                         Comparison::Op::EQ,
                         std::move(value));
                 } else {
-                    auto new_stmt  = std::make_unique<Comparison>(left_column,
+                    auto new_stmt = std::make_unique<Comparison>(left_column,
                         Comparison::Op::EQ,
                         std::move(value));
-                    *out_statement = LogicalOperation::makeOr(std::move(*out_statement),
-                        std::move(new_stmt));
+                    out_statement =
+                        LogicalOperation::makeOr(std::move(out_statement), std::move(new_stmt));
                 }
             }
-            *out_entity = std::move(left_entity);
+            out_entity = std::move(left_entity);
             break;
         }
         case hsql::kOpIsNull: {
@@ -871,10 +869,10 @@ void parse_expr(hsql::Expr*                                          expr,
                 extract_column_and_table(child, table_counts, column_to_tables, alias_map);
             // fmt::println("child_column: {}", child_column);
             // fmt::println("child_table: {}", child_table);
-            *out_statement = std::make_unique<Comparison>(std::move(child_column),
+            out_statement = std::make_unique<Comparison>(std::move(child_column),
                 Comparison::Op::IS_NULL,
                 std::monostate{});
-            *out_entity    = std::move(child_entity);
+            out_entity    = std::move(child_entity);
             break;
         }
         default: {
@@ -886,6 +884,29 @@ void parse_expr(hsql::Expr*                                          expr,
     default: {
         throw std::runtime_error(fmt::format("Expression type: {} not processed", expr->type));
     }
+    }
+}
+
+void parse_expr(hsql::Expr*                                          expr,
+    const std::unordered_map<std::string, int>&                      table_counts,
+    const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
+    const AliasMapType&                                              alias_map,
+    const ColumnMapType&                                             column_map,
+    FilterMapType&                                                   filters,
+    DSU&                                                             join_union) {
+    std::unique_ptr<Statement> top_statement;
+    TableEntity                top_entity;
+    parse_expr_impl(expr,
+        table_counts,
+        column_to_tables,
+        alias_map,
+        column_map,
+        filters,
+        join_union,
+        top_statement,
+        top_entity);
+    if (top_statement) {
+        insert_filter(filters, std::move(top_entity), std::move(top_statement));
     }
 }
 
