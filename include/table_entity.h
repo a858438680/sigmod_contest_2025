@@ -1,6 +1,6 @@
 #pragma once
 
-#include <format>
+#include <fmt/core.h>
 #include <string>
 
 #include "common.h"
@@ -9,8 +9,28 @@ struct TableEntity {
     std::string table;
     int         id;
 
-    auto operator<=>(const TableEntity&) const = default;
+    friend bool operator==(const TableEntity& left, const TableEntity& right);
+    friend bool operator!=(const TableEntity& left, const TableEntity& right);
+    friend bool operator<(const TableEntity& left, const TableEntity& right);
 };
+
+inline bool operator==(const TableEntity& left, const TableEntity& right) {
+    return left.table == right.table && left.id == right.id;
+}
+
+inline bool operator!=(const TableEntity& left, const TableEntity& right) {
+    return !(left == right);
+}
+
+inline bool operator<(const TableEntity& left, const TableEntity& right) {
+    if (left.table < right.table) {
+        return true;
+    } else if (left.table > right.table) {
+        return false;
+    } else {
+        return left.id < right.id;
+    }
+}
 
 namespace std {
 template <>
@@ -23,8 +43,10 @@ struct hash<TableEntity> {
     }
 };
 
+} // namespace std
+
 template <>
-struct formatter<TableEntity> {
+struct fmt::formatter<TableEntity> {
     template <class ParseContext>
     constexpr auto parse(ParseContext& ctx) {
         return ctx.begin();
@@ -32,8 +54,6 @@ struct formatter<TableEntity> {
 
     template <class FormatContext>
     auto format(const TableEntity& te, FormatContext& ctx) const {
-        return std::format_to(ctx.out(), "({}, {})", te.table, te.id);
+        return fmt::format_to(ctx.out(), "({}, {})", te.table, te.id);
     }
 };
-
-} // namespace std

@@ -1,6 +1,8 @@
 // #include <print>
 // #include <ranges>
 
+#include <charconv>
+
 #include <common.h>
 #include <csv_parser.h>
 #include <plan.h>
@@ -9,31 +11,33 @@
 template <class Functor>
 class TableParser: public CSVParser {
 public:
-    size_t               row_off_;
-    std::vector<Data>    last_record_;
-    std::span<Attribute> attributes_;
-    Functor              add_record_fn_;
+    size_t            row_off_;
+    std::vector<Data> last_record_;
+    const Attribute*  attributes_data_;
+    size_t            attributes_size_;
+    Functor           add_record_fn_;
 
     template <class F>
-    TableParser(std::span<Attribute> attributes,
-        F&&                          functor_,
-        char                         escape = '"',
-        char sep                            = ',',
-        bool has_trailing_comma             = false,
-        bool has_header                     = false)
+    TableParser(const std::vector<Attribute>& attributes,
+        F&&                                   functor_,
+        char                                  escape = '"',
+        char sep                                     = ',',
+        bool has_trailing_comma                      = false,
+        bool has_header                              = false)
     : CSVParser(escape, sep, has_trailing_comma)
-    , attributes_(attributes)
-    , row_off_(has_header ? static_cast<size_t>(-1) : 0zu)
+    , attributes_data_(attributes.data())
+    , attributes_size_(attributes.size())
+    , row_off_(has_header ? static_cast<size_t>(-1) : static_cast<size_t>(0))
     , add_record_fn_(static_cast<F&&>(functor_)) {}
 
     void on_field(size_t col_idx, size_t row_idx, const char* begin, size_t len) override {
         if (row_idx + this->row_off_ == static_cast<size_t>(-1)) {
             return;
         }
-        if (len == 0zu) {
+        if (len == 0) {
             this->last_record_.emplace_back(std::monostate{});
         } else {
-            switch (this->attributes_[col_idx].type) {
+            switch (this->attributes_data_[col_idx].type) {
             case DataType::INT32: {
                 int32_t value;
                 auto    result = std::from_chars(begin, begin + len, value);
@@ -67,25 +71,25 @@ public:
             }
             }
         }
-        if (col_idx + 1 == this->attributes_.size()) {
+        if (col_idx + 1 == this->attributes_size_) {
             this->add_record_fn_(std::move(this->last_record_));
             this->last_record_.clear();
-            this->last_record_.reserve(attributes_.size());
+            this->last_record_.reserve(attributes_size_);
         }
     }
 };
 
 template <class F>
-TableParser(std::span<Attribute> attributes,
+TableParser(const std::vector<Attribute>& attributes,
     F&&                          functor_,
     char                         escape = '"',
     char sep                            = ',',
     bool has_trailing_comma             = false,
-    bool has_header                     = false) -> TableParser<std::remove_cvref_t<F>>;
+    bool has_header                     = false) -> TableParser<std::decay_t<F>>;
 
 char buffer[1024 * 1024];
 
-Table Table::from_csv(std::span<Attribute> attributes,
+Table Table::from_csv(const std::vector<Attribute>& attributes,
     const std::filesystem::path&           path,
     Statement*                             filter,
     bool                                   header) {
@@ -125,7 +129,7 @@ bool get_bitmap(const uint8_t* bitmap, uint16_t idx) {
 }
 
 Table Table::from_columnar(const ColumnarTable& table) {
-    namespace views = std::views;
+    namespace views = ranges::views;
     std::vector<std::vector<Data>> columns;
     columns.reserve(table.columns.size());
     std::vector<DataType> types;
@@ -233,10 +237,10 @@ Table Table::from_columnar(const ColumnarTable& table) {
     }
     std::vector<std::vector<Data>> results;
     results.reserve(table.num_rows);
-    for (auto i = 0zu; i < table.num_rows; ++i) {
+    for (size_t i = 0; i < table.num_rows; ++i) {
         std::vector<Data> record;
         record.reserve(table.columns.size());
-        for (auto j = 0zu; j < table.columns.size(); ++j) {
+        for (size_t j = 0; j < table.columns.size(); ++j) {
             record.emplace_back(columns[j][i]);
         }
         results.emplace_back(std::move(record));
@@ -265,7 +269,7 @@ void unset_bitmap(std::vector<uint8_t>& bitmap, uint16_t idx) {
 ColumnarTable Table::to_columnar() const {
     auto& table      = this->data_;
     auto& data_types = this->types_;
-    namespace views  = std::views;
+    namespace views  = ranges::views;
     ColumnarTable ret;
     ret.num_rows = table.size();
     for (auto [col_idx, data_type]: data_types | views::enumerate) {
@@ -410,8 +414,8 @@ ColumnarTable Table::to_columnar() const {
             offsets.reserve(4096);
             bitmap.reserve(512);
             auto save_long_string = [&column](std::string_view data) {
-                auto offset     = 0zu;
-                auto first_page = true;
+                size_t offset     = 0;
+                auto   first_page = true;
                 while (offset < data.size()) {
                     auto* page = column.new_page()->data;
                     if (first_page) {

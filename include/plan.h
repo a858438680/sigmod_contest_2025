@@ -18,8 +18,6 @@
 // See https://sigmod-contest-2025.github.io/index.html
 #pragma once
 
-#include <print>
-
 #include <attribute.h>
 #include <statement.h>
 // #include <table.h>
@@ -46,6 +44,11 @@ struct JoinNode {
 struct PlanNode {
     std::variant<ScanNode, JoinNode>          data;
     std::vector<std::tuple<size_t, DataType>> output_attrs;
+
+    PlanNode(std::variant<ScanNode, JoinNode>     data,
+        std::vector<std::tuple<size_t, DataType>> output_attrs)
+    : data(std::move(data))
+    , output_attrs(std::move(output_attrs)) {}
 };
 
 constexpr size_t PAGE_SIZE = 8192;
@@ -96,41 +99,6 @@ struct Column {
     }
 };
 
-// struct ColumnInsertionState {
-//     Column&               column;
-//     DataType              type;
-//     uint16_t              num_rows;
-//     size_t                page_idx;
-//     size_t                current_offset;
-//     std::vector<uint16_t> offsets;
-//     std::vector<uint8_t>  bitmaps;
-
-//     ColumnInsertionState(Column& column, DataType type)
-//     : column(column)
-//     , type(type)
-//     , num_rows(0zu)
-//     , page_idx(0zu)
-//     , current_offset(0zu) {
-//         switch (type) {
-//         case DataType::INT32:   current_offset = 4; break;
-//         case DataType::INT64:   current_offset = 8; break;
-//         case DataType::FP64:    current_offset = 8; break;
-//         case DataType::VARCHAR: current_offset = 2; break;
-//         }
-//     }
-
-//     void update(int32_t value) {
-//         if ((current_offset + 4) + (num_rows / 8 + 1) > PAGE_SIZE) {
-//             auto* page = column.pages[page_idx]->data;
-//             *reinterpret_cast<uint16_t*>(page) = num_rows;
-//             memcpy(page + PAGE_SIZE - bitmaps.size(), bitmaps.data(), bitmaps.size());
-//             column.new_page();
-
-//         }
-//         auto* page = column.pages[page_idx]->data;
-//     }
-// };
-
 struct ColumnarTable {
     size_t              num_rows;
     std::vector<Column> columns;
@@ -139,49 +107,7 @@ struct ColumnarTable {
 std::tuple<std::vector<std::vector<Data>>, std::vector<DataType>> from_columnar(
     const ColumnarTable& table);
 ColumnarTable from_table(const std::vector<std::vector<Data>>& table,
-    std::span<DataType>                                        data_types);
-
-// struct PAXTable {
-//     size_t                 num_rows;
-//     size_t                 string_page_begin;
-//     std::vector<Attribute> attributes;
-//     std::vector<Page*>     pages;
-
-//     static Page* new_page() { return new Page; }
-
-//     PAXTable() = default;
-
-//     PAXTable(PAXTable&& other) noexcept
-//     : num_rows(std::exchange(other.num_rows, 0))
-//     , string_page_begin(std::exchange(other.string_page_begin, 0))
-//     , attributes(std::move(other.attributes))
-//     , pages(std::move(other.pages)) {
-//         other.pages.clear();
-//     }
-
-//     PAXTable& operator=(PAXTable&& other) noexcept {
-//         if (this != &other) {
-//             for (auto* page: pages) {
-//                 delete page;
-//             }
-//             num_rows          = std::exchange(other.num_rows, 0);
-//             string_page_begin = std::exchange(other.string_page_begin, 0);
-//             attributes        = std::move(other.attributes);
-//             pages             = std::move(other.pages);
-//             other.pages.clear();
-//         }
-//         return *this;
-//     }
-
-//     PAXTable(const PAXTable&)            = delete;
-//     PAXTable& operator=(const PAXTable&) = delete;
-
-//     ~PAXTable() {
-//         for (auto* page: pages) {
-//             delete page;
-//         }
-//     }
-// };
+    const std::vector<DataType>&                               data_types);
 
 struct Plan {
     std::vector<PlanNode>      nodes;
@@ -220,12 +146,6 @@ struct Plan {
         inputs.emplace_back(std::move(input));
         return ret;
     }
-
-    // size_t new_table(Table table) {
-    //     auto ret = tables.size();
-    //     tables.emplace_back(std::move(table));
-    //     return ret;
-    // }
 };
 
 namespace Contest {

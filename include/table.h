@@ -1,8 +1,8 @@
 #pragma once
 
 #include <filesystem>
-#include <print>
-#include <ranges>
+#include <fmt/core.h>
+#include <range/v3/all.hpp>
 
 #include <attribute.h>
 #include <plan.h>
@@ -16,10 +16,10 @@ public:
     : types_(types)
     , data_(data) {}
 
-    static Table from_csv(std::span<Attribute> attributes,
-        const std::filesystem::path&           path,
-        Statement*                             filter,
-        bool                                   header = false);
+    static Table from_csv(const std::vector<Attribute>& attributes,
+        const std::filesystem::path&                    path,
+        Statement*                                      filter,
+        bool                                            header = false);
 
     static Table from_columnar(const ColumnarTable& input);
 
@@ -34,8 +34,7 @@ public:
     size_t number_cols() const { return this->types_.size(); }
 
     void print() const {
-        namespace ranges = std::ranges;
-        namespace views  = std::views;
+        namespace views = ranges::views;
 
         // 定义转义字符串的lambda
         auto escape_string = [](const std::string& s) {
@@ -65,16 +64,16 @@ public:
                                     } else if constexpr (std::is_same_v<T, int32_t>
                                                          || std::is_same_v<T, int64_t>
                                                          || std::is_same_v<T, double>) {
-                                        return std::format("{}", arg);
+                                        return fmt::format("{}", arg);
                                     } else if constexpr (std::is_same_v<T, std::string>) {
-                                        return std::format("\"{}\"", escape_string(arg));
-                                        // return std::format("{}", arg);
+                                        return fmt::format("\"{}\"", escape_string(arg));
+                                        // return fmt::format("{}", arg);
                                     }
                                 },
                                 field);
                         })
-                      | views::join_with('|') | ranges::to<std::string>();
-            std::println("{}", line);
+                      | views::join('|') | ranges::to<std::string>();
+            fmt::println("{}", line);
         }
     }
 
@@ -82,7 +81,7 @@ private:
     std::vector<DataType>          types_;
     std::vector<std::vector<Data>> data_;
 
-    void set_attributes(std::span<Attribute> attributes) {
+    void set_attributes(const std::vector<Attribute>& attributes) {
         this->types_.clear();
         for (auto& attr: attributes) {
             this->types_.push_back(attr.type);

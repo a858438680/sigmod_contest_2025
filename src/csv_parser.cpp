@@ -1,7 +1,7 @@
 #include <csv_parser.h>
 
 CSVParser::Error CSVParser::execute(const char* buffer, size_t len) {
-    auto i = 0zu;
+    size_t i = 0;
     if (this->escaping_) {
         if (this->escape_ == '"') {
             if (buffer[0] == '"') {

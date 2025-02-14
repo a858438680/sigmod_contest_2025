@@ -90,9 +90,9 @@ std::unique_ptr<Comparison> Parser::parseComparison() {
     // processs operand
     if (op != Comparison::IS_NULL && op != Comparison::IS_NOT_NULL) {
         switch (current().type) {
-        case Token::LITERAL_INT:    value = get<int64_t>(current().value); break;
-        case Token::LITERAL_FLOAT:  value = get<double>(current().value); break;
-        case Token::LITERAL_STRING: value = get<std::string>(current().value); break;
+        case Token::LITERAL_INT:    value = std::get<int64_t>(current().value); break;
+        case Token::LITERAL_FLOAT:  value = std::get<double>(current().value); break;
+        case Token::LITERAL_STRING: value = std::get<std::string>(current().value); break;
         default:                    throw std::runtime_error("Expected literal value");
         }
         consume();
@@ -109,7 +109,7 @@ std::unique_ptr<Statement> build_statement(std::string input) {
     return statement;
 }
 
-bool Comparison::eval(std::span<Attribute> attributes, std::span<Data> record) const {
+bool Comparison::eval(const std::vector<Attribute>& attributes, const std::vector<Data>& record) const {
     size_t index = attributes.size();
     for (size_t i = 0; i < attributes.size(); ++i) {
         if (attributes[i].name == column) {
@@ -174,7 +174,7 @@ bool Comparison::eval(std::span<Attribute> attributes, std::span<Data> record) c
     }
 }
 
-bool LogicalOperation::eval(std::span<Attribute> attributes, std::span<Data> record) const {
+bool LogicalOperation::eval(const std::vector<Attribute>& attributes, const std::vector<Data>& record) const {
     switch (op_type) {
         case AND: {
             for (const auto& child : children) {

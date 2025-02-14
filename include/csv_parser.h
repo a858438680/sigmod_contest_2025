@@ -2,6 +2,8 @@
 
 #include <vector>
 
+#include <cstdlib>
+
 class CSVParser {
 public:
     enum Error {
@@ -31,9 +33,9 @@ private:
 
     // states
     std::vector<char> current_field_;
-    size_t            col_idx_{0zu};
-    size_t            row_idx_{0zu};
-    size_t            num_cols_{0zu};
+    size_t            col_idx_{0};
+    size_t            row_idx_{0};
+    size_t            num_cols_{0};
     bool              after_first_row_{false};
     bool              quoted_{false};
     bool              after_field_sep_{false};

@@ -1,9 +1,8 @@
 #pragma once
 
 #include <algorithm>
-#include <format>
+#include <fmt/core.h>
 #include <mutex>
-#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -50,7 +49,8 @@ struct Token {
 struct Statement {
     virtual ~Statement()                                   = default;
     virtual std::string pretty_print(int indent = 0) const = 0;
-    virtual bool        eval(std::span<Attribute> attributes, std::span<Data> record) const = 0;
+    virtual bool        eval(const std::vector<Attribute>& attributes,
+               const std::vector<Data>&                    record) const      = 0;
 };
 
 struct Comparison: Statement {
@@ -78,10 +78,11 @@ struct Comparison: Statement {
     , value(std::move(val)) {}
 
     std::string pretty_print(int indent) const override {
-        return std::format("{:{}}{} {} {}", "", indent, column, opToString(), valueToString());
+        return fmt::format("{:{}}{} {} {}", "", indent, column, opToString(), valueToString());
     }
 
-    bool eval(std::span<Attribute> attributes, std::span<Data> record) const override;
+    bool eval(const std::vector<Attribute>& attributes,
+        const std::vector<Data>&                    record) const override;
 
 private:
     std::string opToString() const {
@@ -108,11 +109,11 @@ private:
             [](auto&& arg) -> std::string {
                 using T = std::decay_t<decltype(arg)>;
                 if constexpr (std::is_same_v<T, std::string>) {
-                    return std::format("'{}'", arg);
+                    return fmt::format("'{}'", arg);
                 } else if constexpr (std::is_same_v<T, std::monostate>) {
                     return "";
                 } else {
-                    return std::format("{}", arg);
+                    return fmt::format("{}", arg);
                 }
             },
             value);
@@ -243,7 +244,7 @@ struct LogicalOperation: Statement {
             }
         }();
 
-        std::string result = std::format("{:{}}[{}]\n", "", indent, op_str);
+        std::string result = fmt::format("{:{}}[{}]\n", "", indent, op_str);
 
         for (auto& child: children) {
             result += child->pretty_print(indent + 2) + "\n";
@@ -255,7 +256,8 @@ struct LogicalOperation: Statement {
         return result;
     }
 
-    bool eval(std::span<Attribute> attributes, std::span<Data> record) const override;
+    bool eval(const std::vector<Attribute>& attributes,
+        const std::vector<Data>&                    record) const override;
 };
 
 class Lexer {
