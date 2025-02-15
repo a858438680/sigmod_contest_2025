@@ -77,56 +77,8 @@ target_include_directories(contest PUBLIC include)
 target_link_libraries(contest PUBLIC re2 fmt range-v3)
 target_compile_definitions(contest PUBLIC -D_CRT_SECURE_NO_WARNINGS)
 
-# add_executable(
-#     read_plan
-#     tests/read_plan.cpp
-# )
-# target_link_libraries(read_plan PRIVATE contest nlohmann_json::nlohmann_json)
-
 add_executable(
     read_sql
     tests/read_sql.cpp
 )
 target_link_libraries(read_sql PRIVATE contest nlohmann_json::nlohmann_json sqlparser duckdb)
-
-# add_executable(
-#     join
-#     tests/join.cpp
-# )
-# target_link_libraries(join PRIVATE contest)
-
-# add_executable(
-#     filter
-#     tests/filter.cpp
-# )
-# target_link_libraries(filter PRIVATE contest)
-
-# add_executable(
-#     read_csv
-#     tests/read_csv.cpp
-# )
-# target_link_libraries(read_csv PRIVATE contest)
-
-# add_executable(
-#     test_sql_parser
-#     tests/test_sql_parser.cpp
-# )
-# target_link_libraries(test_sql_parser PRIVATE contest sqlparser)
-
-# add_executable(
-#     parse_statement
-#     tests/parse_statement.cpp
-# )
-# target_link_libraries(parse_statement PRIVATE contest)
-
-# add_executable(
-#     statement_tests
-#     tests/statement_tests.cpp
-# )
-# target_link_libraries(statement_tests PRIVATE Catch2::Catch2WithMain contest)
-
-# add_executable(
-#     unit_tests
-#     tests/unit_tests.cpp
-# )
-# target_link_libraries(unit_tests PRIVATE Catch2::Catch2WithMain contest)

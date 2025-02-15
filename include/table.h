@@ -27,13 +27,15 @@ public:
 
     const std::vector<std::vector<Data>>& table() const { return data_; }
 
+    std::vector<std::vector<Data>>& table() { return data_; }
+
     const std::vector<DataType>& types() const { return types_; }
 
     size_t number_rows() const { return this->data_.size(); }
 
     size_t number_cols() const { return this->types_.size(); }
 
-    void print() const {
+    static void print(const std::vector<std::vector<Data>>& data) {
         namespace views = ranges::views;
 
         // 定义转义字符串的lambda
@@ -52,7 +54,7 @@ public:
             return escaped;
         };
 
-        for (auto& record: this->data_) {
+        for (auto& record: data) {
             auto line = record
                       | views::transform([&escape_string](const Data& field) -> std::string {
                             return std::visit(

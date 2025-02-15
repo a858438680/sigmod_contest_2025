@@ -11,6 +11,8 @@
 
 #include <SQLParser.h>
 
+#include <duckdb.hpp>
+
 using json = nlohmann::json;
 
 // 属性查找表
@@ -156,266 +158,6 @@ bool only_contains_hash_join(const json& node) {
     return true;
 }
 
-Plan load_join_pipeline(const json& node,
-    const AliasMapType&             alias_map,
-    const FilterMapType&            filters,
-    const JoinGraphType&            join_graph,
-    const OutputAttrsType&          top_attrs) {
-    namespace fs = std::filesystem;
-    static std::unordered_set<std::string_view> other_operators{"Aggregate", "Gather"};
-    static std::unordered_set<std::string_view> join_types{"Nested Loop",
-        "Hash Join",
-        "Merge Join"};
-    static std::unordered_set<std::string_view> scan_types{"Seq Scan", "Index Only Scan"};
-    Plan                                        ret;
-
-    auto extract_entities = [&](auto&& extract_entities,
-                                const json& node) -> std::unordered_set<TableEntity> {
-        auto node_type = node["Node Type"].get<std::string_view>();
-
-        if (auto itr = other_operators.find(node_type); itr != other_operators.end()) {
-            return extract_entities(extract_entities, node["Plans"][0]);
-        } else if (auto itr = join_types.find(node_type); itr != join_types.end()) {
-            if (node_type != "Hash Join") {
-                throw std::runtime_error("Not Hash Join");
-            }
-            auto left_type  = node["Plans"][0]["Node Type"].get<std::string_view>();
-            auto right_type = node["Plans"][1]["Node Type"].get<std::string_view>();
-            std::unordered_set<TableEntity> left_entities, right_entities;
-            if (left_type == "Hash" and right_type != "Hash") {
-                left_entities =
-                    extract_entities(extract_entities, node["Plans"][0]["Plans"][0]);
-                right_entities = extract_entities(extract_entities, node["Plans"][1]);
-            } else if (left_type != "Hash" and right_type == "Hash") {
-                left_entities = extract_entities(extract_entities, node["Plans"][0]);
-                right_entities =
-                    extract_entities(extract_entities, node["Plans"][1]["Plans"][0]);
-            } else {
-                throw std::runtime_error("Hash Join should have at least one Hash child");
-            }
-            left_entities.merge(std::move(right_entities));
-            return left_entities;
-        } else if (auto itr = scan_types.find(node_type); itr != scan_types.end()) {
-            if (not node.contains("Alias")) {
-                throw std::runtime_error("No \"Alias\" in scan node");
-            }
-            auto        alias = node["Alias"].get<std::string>();
-            TableEntity entity;
-            if (auto itr = alias_map.find(alias); itr != alias_map.end()) {
-                entity = itr->second;
-            } else {
-                throw std::runtime_error(fmt::format("Cannot find alias: {}", alias));
-            }
-            std::unordered_set<TableEntity> entities{std::move(entity)};
-            return entities;
-        } else {
-            throw std::runtime_error(fmt::format("Not supported node type: {}", node_type));
-        }
-    };
-
-    auto recurse = [&](auto&& recurse, const json& node, const OutputAttrsType& required_attrs)
-        -> std::tuple<size_t, std::vector<std::tuple<TableEntity, std::string, DataType>>> {
-        auto node_type = node["Node Type"].get<std::string_view>();
-
-        if (auto itr = other_operators.find(node_type); itr != other_operators.end()) {
-            return recurse(recurse, node["Plans"][0], required_attrs);
-        } else if (auto itr = join_types.find(node_type); itr != join_types.end()) {
-            if (node_type != "Hash Join") {
-                throw std::runtime_error("Not Hash Join");
-            }
-            auto   left_type  = node["Plans"][0]["Node Type"].get<std::string_view>();
-            auto   right_type = node["Plans"][1]["Node Type"].get<std::string_view>();
-            bool   build_left;
-            size_t left, right;
-            size_t left_attr, right_attr;
-            std::unordered_set<TableEntity> left_entities, right_entities;
-            std::vector<std::tuple<TableEntity, std::string, DataType>> left_columns,
-                right_columns;
-            TableEntity left_entity, right_entity;
-            std::string left_column, right_column;
-            const json* pleft;
-            const json* pright;
-            if (left_type == "Hash" and right_type != "Hash") {
-                build_left = true;
-                pleft      = &node["Plans"][0]["Plans"][0];
-                pright     = &node["Plans"][1];
-            } else if (left_type != "Hash" and right_type == "Hash") {
-                build_left = false;
-                pleft      = &node["Plans"][0];
-                pright     = &node["Plans"][1]["Plans"][0];
-            } else {
-                throw std::runtime_error("Hash Join should have at least one Hash child");
-            }
-            left_entities             = extract_entities(extract_entities, *pleft);
-            right_entities            = extract_entities(extract_entities, *pright);
-            bool found_join_condition = false;
-            for (auto& entity: left_entities) {
-                if (auto itr = join_graph.find(entity); itr != join_graph.end()) {
-                    for (auto& [adj, columns]: itr->second) {
-                        if (auto iter = right_entities.find(adj);
-                            iter != right_entities.end()) {
-                            left_entity                         = entity;
-                            right_entity                        = adj;
-                            std::tie(left_column, right_column) = columns;
-                            found_join_condition                = true;
-                        }
-                    }
-                }
-            }
-            if (not found_join_condition) {
-                fmt::println(stderr, "left entities:");
-                for (auto& entity: left_entities) {
-                    fmt::println(stderr, "    {}", entity);
-                }
-                fmt::println(stderr, "right entities:");
-                for (auto& entity: right_entities) {
-                    fmt::println(stderr, "    {}", entity);
-                }
-                throw std::runtime_error("Cannot find join condition");
-            }
-            OutputAttrsType left_required, right_required;
-            bool            left_attr_already_in = false, right_attr_already_in = false;
-            for (const auto& [required_entity, required_column]: required_attrs) {
-                if (auto itr = left_entities.find(required_entity);
-                    itr != left_entities.end()) {
-                    if (required_entity == left_entity and required_column == left_column) {
-                        left_attr_already_in = true;
-                    }
-                    left_required.emplace_back(required_entity, required_column);
-                } else if (auto itr = right_entities.find(required_entity);
-                    itr != right_entities.end()) {
-                    if (required_entity == right_entity and required_column == right_column) {
-                        right_attr_already_in = true;
-                    }
-                    right_required.emplace_back(required_entity, required_column);
-                } else {
-                    throw std::runtime_error(
-                        "Required attributes cannot be found in neither left child nor right "
-                        "child.");
-                }
-            }
-            if (not left_attr_already_in) {
-                left_required.emplace_back(left_entity, left_column);
-            }
-            if (not right_attr_already_in) {
-                right_required.emplace_back(right_entity, right_column);
-            }
-            std::tie(left, left_columns)   = recurse(recurse, *pleft, left_required);
-            std::tie(right, right_columns) = recurse(recurse, *pright, right_required);
-            size_t idx                     = 0;
-            bool   left_attr_set = false, right_attr_set = false;
-            for (auto& [entity, column, _]: left_columns) {
-                if (entity == left_entity and column == left_column) {
-                    left_attr     = idx;
-                    left_attr_set = true;
-                    break;
-                }
-                ++idx;
-            }
-            idx = 0;
-            for (auto& [entity, column, _]: right_columns) {
-                if (entity == right_entity and column == right_column) {
-                    right_attr     = idx;
-                    right_attr_set = true;
-                    break;
-                }
-                ++idx;
-            }
-            if (not left_attr_set or not right_attr_set) {
-                throw std::runtime_error("Join conditions are not set properly");
-            }
-            left_columns.insert(left_columns.end(),
-                std::make_move_iterator(right_columns.begin()),
-                std::make_move_iterator(right_columns.end()));
-            std::vector<std::tuple<TableEntity, std::string, DataType>> output_columns;
-            std::vector<std::tuple<size_t, DataType>>                   output_attrs;
-            for (const auto& [required_entity, required_column]: required_attrs) {
-                bool   found     = false;
-                size_t input_idx = 0;
-                for (const auto& [entity, column, type]: left_columns) {
-                    if (entity == required_entity and column == required_column) {
-                        output_columns.emplace_back(required_entity, required_column, type);
-                        output_attrs.emplace_back(input_idx, type);
-                        found = true;
-                        break;
-                    }
-                    ++input_idx;
-                }
-                if (not found) {
-                    throw std::runtime_error(fmt::format(
-                        "Cannot found the required attr: {}.{} in children's output",
-                        required_entity,
-                        required_column));
-                }
-            }
-            auto new_node_id = ret.new_join_node(build_left,
-                left,
-                right,
-                left_attr,
-                right_attr,
-                std::move(output_attrs));
-            return {new_node_id, std::move(output_columns)};
-        } else if (auto itr = scan_types.find(node_type); itr != scan_types.end()) {
-            if (not node.contains("Alias")) {
-                throw std::runtime_error("No \"Alias\" in scan node");
-            }
-            auto        alias = node["Alias"].get<std::string>();
-            TableEntity entity;
-            if (auto itr = alias_map.find(alias); itr != alias_map.end()) {
-                entity = itr->second;
-            } else {
-                throw std::runtime_error(fmt::format("Cannot find alias: {}", alias));
-            }
-            std::vector<Attribute>* pattributes;
-            if (auto itr = attributes_map.find(entity.table); itr != attributes_map.end()) {
-                pattributes = &itr->second;
-            } else {
-                throw std::runtime_error(
-                    fmt::format("Cannot find attributes for table: {}", entity.table));
-            }
-            Statement* filter = nullptr;
-            if (auto itr = filters.find(entity); itr != filters.end()) {
-                filter = itr->second.get();
-            }
-            auto table        = Table::from_csv(*pattributes,
-                fs::path("imdb") / fmt::format("{}.csv", entity.table),
-                filter);
-            auto new_input_id = ret.new_input(table.to_columnar());
-            // auto new_input_id = ret.new_table(std::move(table));
-            std::vector<std::tuple<TableEntity, std::string, DataType>> output_columns;
-            std::vector<std::tuple<size_t, DataType>>                   output_attrs;
-            for (const auto& [required_entity, required_column]: required_attrs) {
-                bool   found     = false;
-                size_t input_idx = 0;
-                for (const auto& attribute: *pattributes) {
-                    if (entity == required_entity and attribute.name == required_column) {
-                        output_columns.emplace_back(required_entity,
-                            required_column,
-                            attribute.type);
-                        output_attrs.emplace_back(input_idx, attribute.type);
-                        found = true;
-                        break;
-                    }
-                    ++input_idx;
-                }
-                if (not found) {
-                    throw std::runtime_error(fmt::format(
-                        "Cannot found the required attr: {}.{} in children's output",
-                        required_entity,
-                        required_column));
-                }
-            }
-            auto new_node_id = ret.new_scan_node(new_input_id, std::move(output_attrs));
-            return {new_node_id, std::move(output_columns)};
-        } else {
-            throw std::runtime_error(fmt::format("Not supported node type: {}", node_type));
-        }
-    };
-
-    std::tie(ret.root, std::ignore) = recurse(recurse, node, top_attrs);
-    return ret;
-}
-
 template <>
 struct fmt::formatter<hsql::ExprType> {
     template <class ParseContext>
@@ -527,7 +269,7 @@ std::tuple<std::string, TableEntity> extract_column_and_table(hsql::Expr* expr,
                 throw std::runtime_error(
                     fmt::format("Ambiguous column: {0}, {1} have column {0}",
                         column,
-                        itr->second | views::join(", ") | ranges::to<std::string>()));
+                        itr->second | views::join(", "s) | ranges::to<std::string>()));
             } else {
                 auto& table_name = itr->second[0];
                 if (auto itr = table_counts.find(table_name); itr != table_counts.end()) {
@@ -910,143 +652,540 @@ void parse_expr(hsql::Expr*                                          expr,
     }
 }
 
+struct ParsedSQL {
+    const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables;
+    std::unordered_map<std::string, int>                             table_counts;
+    AliasMapType                                                     alias_map;
+    std::unordered_map<TableEntity, std::string>                     entity_to_alias;
+    JoinGraphType                                                    join_graph;
+    FilterMapType                                                    filters;
+    OutputAttrsType                                                  output_attrs;
+    ColumnMapType                                                    column_map;
+    std::vector<std::tuple<TableEntity, std::string>>                column_vec;
+
+    ParsedSQL(const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables)
+    : column_to_tables(column_to_tables) {}
+
+    std::string executed_sql(const std::string& sql) {
+        namespace views = ranges::views;
+        using namespace std::string_literals;
+
+        auto select_list =
+            output_attrs
+            | views::transform([this](const std::tuple<TableEntity, std::string>& attr) {
+                  auto& [entity, column] = attr;
+                  if (auto itr = entity_to_alias.find(entity); itr != entity_to_alias.end()) {
+                      return fmt::format("{}.{}", itr->second, column);
+                  } else {
+                      return fmt::format("{}.{}", entity.table, column);
+                  }
+              })
+            | views::join(", "s) | ranges::to<std::string>();
+
+        auto from_clause_begin = sql.find("FROM");
+        if (from_clause_begin == std::string::npos) {
+            from_clause_begin = sql.find("from");
+            if (from_clause_begin == std::string::npos) {
+                throw std::runtime_error("Cannot find \"FROM\" or \"from\" in sql");
+            }
+        }
+        size_t num_trailing_space = 0;
+        for (auto itr = sql.rbegin(); itr != sql.rend(); ++itr) {
+            if (*itr != ';') {
+                ++num_trailing_space;
+            } else {
+                break;
+            }
+        }
+        std::string_view other = std::string_view{sql.data() + from_clause_begin,
+            sql.size() - num_trailing_space - from_clause_begin};
+
+        return fmt::format("SELECT {} {}", select_list, other);
+    }
+
+    void parse_sql(const std::string& sql, std::string_view name) {
+        hsql::SQLParserResult sql_result;
+        hsql::SQLParser::parse(sql, &sql_result);
+
+        if (not sql_result.isValid()) {
+            throw std::runtime_error(fmt::format("Error parsing SQL: {}", name));
+        }
+        auto statement = (const hsql::SelectStatement*)sql_result.getStatement(0);
+
+        auto fromTable = statement->fromTable;
+        if (fromTable->type != hsql::kTableCrossProduct) {
+            throw std::runtime_error("SQL not supported");
+        }
+        auto   fromTableList = fromTable->list;
+        size_t column_count  = 0;
+        for (auto table: *fromTableList) {
+            if (table->type != hsql::kTableName) {
+                throw std::runtime_error("SQL not supported");
+            }
+            auto table_itr = table_counts.find(table->name);
+            if (table_itr == table_counts.end()) {
+                bool _;
+                std::tie(table_itr, _) = table_counts.emplace(table->name, 1);
+            } else {
+                ++(table_itr->second);
+            }
+            TableEntity entity{table->name, table_itr->second - 1};
+            auto [itr, _] =
+                column_map.emplace(entity, std::unordered_map<std::string, size_t>{});
+            if (auto attr_itr = attributes_map.find(entity.table);
+                attr_itr != attributes_map.end()) {
+                for (auto& attr: attr_itr->second) {
+                    itr->second.emplace(attr.name, column_count++);
+                    column_vec.emplace_back(entity, attr.name);
+                }
+            } else {
+                throw std::runtime_error(fmt::format("No table: {} in schema", entity.table));
+            }
+            auto alias = table->alias;
+            if (alias) {
+                alias_map.emplace(alias->name, entity);
+                entity_to_alias.emplace(entity, alias->name);
+            }
+        }
+
+        auto& selectList = *statement->selectList;
+        for (auto* expr: selectList) {
+            switch (expr->type) {
+            case (hsql::kExprFunctionRef): {
+                for (auto* child: *expr->exprList) {
+                    // fmt::println("Child: {}", child->type);
+                    if (child->type != hsql::kExprColumnRef) {
+                        throw std::runtime_error(
+                            "Complex select expressions are not supported");
+                    }
+                    auto [column, entity] = extract_column_and_table(child,
+                        table_counts,
+                        column_to_tables,
+                        alias_map);
+                    output_attrs.emplace_back(entity, column);
+                }
+                break;
+            }
+            default: {
+                throw std::runtime_error(
+                    fmt::format("Not supported expression type in select list: {}.",
+                        expr->type));
+                break;
+            }
+            }
+        }
+        auto condition = statement->whereClause;
+        DSU  join_union(column_count);
+        parse_expr(condition,
+            table_counts,
+            column_to_tables,
+            alias_map,
+            column_map,
+            filters,
+            join_union);
+
+        std::unordered_map<size_t, std::vector<size_t>> joined_columns;
+        for (size_t i = 0; i < column_count; ++i) {
+            auto set = join_union.find(i);
+            if (auto itr = joined_columns.find(set); itr != joined_columns.end()) {
+                itr->second.emplace_back(i);
+            } else {
+                joined_columns.emplace(set, std::vector<size_t>(1, i));
+            }
+        }
+
+        for (auto& [set, items]: joined_columns) {
+            for (size_t i = 0; i < items.size() - 1; ++i) {
+                for (auto j = i + 1; j < items.size(); ++j) {
+                    auto& [left_entity, left_column]   = column_vec[items[i]];
+                    auto& [right_entity, right_column] = column_vec[items[j]];
+                    if (auto itr = join_graph.find(left_entity); itr != join_graph.end()) {
+                        if (auto iter = itr->second.find(right_entity);
+                            iter != itr->second.end()) {
+                            throw std::runtime_error(
+                                "At least two conditions between a same pair of tables.");
+                        }
+                        itr->second.emplace(right_entity,
+                            std::tuple{left_column, right_column});
+                    } else {
+                        std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
+                            adj_item;
+                        adj_item.emplace(right_entity, std::tuple{left_column, right_column});
+                        join_graph.emplace(left_entity, std::move(adj_item));
+                    }
+                    if (auto itr = join_graph.find(right_entity); itr != join_graph.end()) {
+                        itr->second.emplace(left_entity, std::tuple{right_column, left_column});
+                    } else {
+                        std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
+                            adj_item;
+                        adj_item.emplace(left_entity, std::tuple{right_column, left_column});
+                        join_graph.emplace(right_entity, std::move(adj_item));
+                    }
+                }
+            }
+        }
+    }
+};
+
+Plan load_join_pipeline(const json& node, const ParsedSQL& parsed_sql) {
+    namespace fs = std::filesystem;
+    static std::unordered_set<std::string_view> other_operators{"Aggregate", "Gather"};
+    static std::unordered_set<std::string_view> join_types{"Nested Loop",
+        "Hash Join",
+        "Merge Join"};
+    static std::unordered_set<std::string_view> scan_types{"Seq Scan", "Index Only Scan"};
+    Plan                                        ret;
+
+    auto extract_entities = [&alias_map = parsed_sql.alias_map](auto&& extract_entities,
+                                const json& node) -> std::unordered_set<TableEntity> {
+        auto node_type = node["Node Type"].get<std::string_view>();
+
+        if (auto itr = other_operators.find(node_type); itr != other_operators.end()) {
+            return extract_entities(extract_entities, node["Plans"][0]);
+        } else if (auto itr = join_types.find(node_type); itr != join_types.end()) {
+            if (node_type != "Hash Join") {
+                throw std::runtime_error("Not Hash Join");
+            }
+            auto left_type  = node["Plans"][0]["Node Type"].get<std::string_view>();
+            auto right_type = node["Plans"][1]["Node Type"].get<std::string_view>();
+            std::unordered_set<TableEntity> left_entities, right_entities;
+            if (left_type == "Hash" and right_type != "Hash") {
+                left_entities =
+                    extract_entities(extract_entities, node["Plans"][0]["Plans"][0]);
+                right_entities = extract_entities(extract_entities, node["Plans"][1]);
+            } else if (left_type != "Hash" and right_type == "Hash") {
+                left_entities = extract_entities(extract_entities, node["Plans"][0]);
+                right_entities =
+                    extract_entities(extract_entities, node["Plans"][1]["Plans"][0]);
+            } else {
+                throw std::runtime_error("Hash Join should have at least one Hash child");
+            }
+            left_entities.merge(std::move(right_entities));
+            return left_entities;
+        } else if (auto itr = scan_types.find(node_type); itr != scan_types.end()) {
+            if (not node.contains("Alias")) {
+                throw std::runtime_error("No \"Alias\" in scan node");
+            }
+            auto        alias = node["Alias"].get<std::string>();
+            TableEntity entity;
+            if (auto itr = alias_map.find(alias); itr != alias_map.end()) {
+                entity = itr->second;
+            } else {
+                throw std::runtime_error(fmt::format("Cannot find alias: {}", alias));
+            }
+            std::unordered_set<TableEntity> entities{std::move(entity)};
+            return entities;
+        } else {
+            throw std::runtime_error(fmt::format("Not supported node type: {}", node_type));
+        }
+    };
+
+    auto recurse = [&extract_entities,
+                       &ret,
+                       &alias_map  = parsed_sql.alias_map,
+                       &join_graph = parsed_sql.join_graph,
+                       &filters    = parsed_sql.filters](auto&& recurse,
+                       const json& node,
+                       const OutputAttrsType& required_attrs)
+        -> std::tuple<size_t, std::vector<std::tuple<TableEntity, std::string, DataType>>> {
+        auto node_type = node["Node Type"].get<std::string_view>();
+
+        if (auto itr = other_operators.find(node_type); itr != other_operators.end()) {
+            return recurse(recurse, node["Plans"][0], required_attrs);
+        } else if (auto itr = join_types.find(node_type); itr != join_types.end()) {
+            if (node_type != "Hash Join") {
+                throw std::runtime_error("Not Hash Join");
+            }
+            auto   left_type  = node["Plans"][0]["Node Type"].get<std::string_view>();
+            auto   right_type = node["Plans"][1]["Node Type"].get<std::string_view>();
+            bool   build_left;
+            size_t left, right;
+            size_t left_attr, right_attr;
+            std::unordered_set<TableEntity> left_entities, right_entities;
+            std::vector<std::tuple<TableEntity, std::string, DataType>> left_columns,
+                right_columns;
+            TableEntity left_entity, right_entity;
+            std::string left_column, right_column;
+            const json* pleft;
+            const json* pright;
+            if (left_type == "Hash" and right_type != "Hash") {
+                build_left = true;
+                pleft      = &node["Plans"][0]["Plans"][0];
+                pright     = &node["Plans"][1];
+            } else if (left_type != "Hash" and right_type == "Hash") {
+                build_left = false;
+                pleft      = &node["Plans"][0];
+                pright     = &node["Plans"][1]["Plans"][0];
+            } else {
+                throw std::runtime_error("Hash Join should have at least one Hash child");
+            }
+            left_entities             = extract_entities(extract_entities, *pleft);
+            right_entities            = extract_entities(extract_entities, *pright);
+            bool found_join_condition = false;
+            for (auto& entity: left_entities) {
+                if (auto itr = join_graph.find(entity); itr != join_graph.end()) {
+                    for (auto& [adj, columns]: itr->second) {
+                        if (auto iter = right_entities.find(adj);
+                            iter != right_entities.end()) {
+                            left_entity                         = entity;
+                            right_entity                        = adj;
+                            std::tie(left_column, right_column) = columns;
+                            found_join_condition                = true;
+                        }
+                    }
+                }
+            }
+            if (not found_join_condition) {
+                fmt::println(stderr, "left entities:");
+                for (auto& entity: left_entities) {
+                    fmt::println(stderr, "    {}", entity);
+                }
+                fmt::println(stderr, "right entities:");
+                for (auto& entity: right_entities) {
+                    fmt::println(stderr, "    {}", entity);
+                }
+                throw std::runtime_error("Cannot find join condition");
+            }
+            OutputAttrsType left_required, right_required;
+            bool            left_attr_already_in = false, right_attr_already_in = false;
+            for (const auto& [required_entity, required_column]: required_attrs) {
+                if (auto itr = left_entities.find(required_entity);
+                    itr != left_entities.end()) {
+                    if (required_entity == left_entity and required_column == left_column) {
+                        left_attr_already_in = true;
+                    }
+                    left_required.emplace_back(required_entity, required_column);
+                } else if (auto itr = right_entities.find(required_entity);
+                    itr != right_entities.end()) {
+                    if (required_entity == right_entity and required_column == right_column) {
+                        right_attr_already_in = true;
+                    }
+                    right_required.emplace_back(required_entity, required_column);
+                } else {
+                    throw std::runtime_error(
+                        "Required attributes cannot be found in neither left child nor right "
+                        "child.");
+                }
+            }
+            if (not left_attr_already_in) {
+                left_required.emplace_back(left_entity, left_column);
+            }
+            if (not right_attr_already_in) {
+                right_required.emplace_back(right_entity, right_column);
+            }
+            std::tie(left, left_columns)   = recurse(recurse, *pleft, left_required);
+            std::tie(right, right_columns) = recurse(recurse, *pright, right_required);
+            size_t idx                     = 0;
+            bool   left_attr_set = false, right_attr_set = false;
+            for (auto& [entity, column, _]: left_columns) {
+                if (entity == left_entity and column == left_column) {
+                    left_attr     = idx;
+                    left_attr_set = true;
+                    break;
+                }
+                ++idx;
+            }
+            idx = 0;
+            for (auto& [entity, column, _]: right_columns) {
+                if (entity == right_entity and column == right_column) {
+                    right_attr     = idx;
+                    right_attr_set = true;
+                    break;
+                }
+                ++idx;
+            }
+            if (not left_attr_set or not right_attr_set) {
+                throw std::runtime_error("Join conditions are not set properly");
+            }
+            left_columns.insert(left_columns.end(),
+                std::make_move_iterator(right_columns.begin()),
+                std::make_move_iterator(right_columns.end()));
+            std::vector<std::tuple<TableEntity, std::string, DataType>> output_columns;
+            std::vector<std::tuple<size_t, DataType>>                   output_attrs;
+            for (const auto& [required_entity, required_column]: required_attrs) {
+                bool   found     = false;
+                size_t input_idx = 0;
+                for (const auto& [entity, column, type]: left_columns) {
+                    if (entity == required_entity and column == required_column) {
+                        output_columns.emplace_back(required_entity, required_column, type);
+                        output_attrs.emplace_back(input_idx, type);
+                        found = true;
+                        break;
+                    }
+                    ++input_idx;
+                }
+                if (not found) {
+                    throw std::runtime_error(fmt::format(
+                        "Cannot found the required attr: {}.{} in children's output",
+                        required_entity,
+                        required_column));
+                }
+            }
+            auto new_node_id = ret.new_join_node(build_left,
+                left,
+                right,
+                left_attr,
+                right_attr,
+                std::move(output_attrs));
+            return {new_node_id, std::move(output_columns)};
+        } else if (auto itr = scan_types.find(node_type); itr != scan_types.end()) {
+            if (not node.contains("Alias")) {
+                throw std::runtime_error("No \"Alias\" in scan node");
+            }
+            auto        alias = node["Alias"].get<std::string>();
+            TableEntity entity;
+            if (auto itr = alias_map.find(alias); itr != alias_map.end()) {
+                entity = itr->second;
+            } else {
+                throw std::runtime_error(fmt::format("Cannot find alias: {}", alias));
+            }
+            std::vector<Attribute>* pattributes;
+            if (auto itr = attributes_map.find(entity.table); itr != attributes_map.end()) {
+                pattributes = &itr->second;
+            } else {
+                throw std::runtime_error(
+                    fmt::format("Cannot find attributes for table: {}", entity.table));
+            }
+            Statement* filter = nullptr;
+            if (auto itr = filters.find(entity); itr != filters.end()) {
+                filter = itr->second.get();
+            }
+            auto table        = Table::from_csv(*pattributes,
+                fs::path("imdb") / fmt::format("{}.csv", entity.table),
+                filter);
+            auto new_input_id = ret.new_input(table.to_columnar());
+            // auto new_input_id = ret.new_table(std::move(table));
+            std::vector<std::tuple<TableEntity, std::string, DataType>> output_columns;
+            std::vector<std::tuple<size_t, DataType>>                   output_attrs;
+            for (const auto& [required_entity, required_column]: required_attrs) {
+                bool   found     = false;
+                size_t input_idx = 0;
+                for (const auto& attribute: *pattributes) {
+                    if (entity == required_entity and attribute.name == required_column) {
+                        output_columns.emplace_back(required_entity,
+                            required_column,
+                            attribute.type);
+                        output_attrs.emplace_back(input_idx, attribute.type);
+                        found = true;
+                        break;
+                    }
+                    ++input_idx;
+                }
+                if (not found) {
+                    throw std::runtime_error(fmt::format(
+                        "Cannot found the required attr: {}.{} in children's output",
+                        required_entity,
+                        required_column));
+                }
+            }
+            auto new_node_id = ret.new_scan_node(new_input_id, std::move(output_attrs));
+            return {new_node_id, std::move(output_columns)};
+        } else {
+            throw std::runtime_error(fmt::format("Not supported node type: {}", node_type));
+        }
+    };
+
+    std::tie(ret.root, std::ignore) = recurse(recurse, node, parsed_sql.output_attrs);
+    return ret;
+}
+
+bool equal(const duckdb::LogicalType& lhs, DataType rhs) {
+    using namespace duckdb;
+    switch (lhs.id()) {
+    case LogicalTypeId::INTEGER: return rhs == DataType::INT32;
+    case LogicalTypeId::BIGINT:  return rhs == DataType::INT64;
+    case LogicalTypeId::DOUBLE:  return rhs == DataType::FP64;
+    case LogicalTypeId::VARCHAR: return rhs == DataType::VARCHAR;
+    default:
+        throw std::runtime_error(fmt::format("{} in DuckDB is not supported", lhs.ToString()));
+    }
+}
+
+void sort(std::vector<std::vector<Data>>& table) {
+    std::sort(table.begin(), table.end());
+}
+
+bool compare(duckdb::MaterializedQueryResult& duckdb_results, const ColumnarTable& results) {
+    using namespace duckdb;
+    auto num_rows = results.num_rows;
+    auto num_cols = results.columns.size();
+    if (duckdb_results.RowCount() != num_rows) {
+        fmt::println("different rows");
+        return false;
+    }
+    if (duckdb_results.ColumnCount() != num_cols) {
+        fmt::println("different cols");
+        return false;
+    }
+    for (size_t i = 0; i < num_cols; ++i) {
+        if (not equal(duckdb_results.types[i], results.columns[i].type)) {
+            fmt::println("different type: {}", i);
+            return false;
+        }
+    }
+
+    std::vector<std::vector<Data>> duckdb_table;
+    auto& coll = duckdb_results.Collection();
+    for (auto& row: coll.Rows()) {
+        std::vector<Data> record;
+        for (size_t col_idx = 0; col_idx < num_cols; col_idx++) {
+            auto val = row.GetValue(col_idx);
+            if (val.IsNull()) {
+                record.emplace_back(std::monostate{});
+            } else {
+                switch (results.columns[col_idx].type) {
+                case DataType::INT32: {
+                    record.emplace_back(IntegerValue::Get(val));
+                    break;
+                }
+                case DataType::INT64: {
+                    record.emplace_back(BigIntValue::Get(val));
+                    break;
+                }
+                case DataType::FP64: {
+                    record.emplace_back(FloatValue::Get(val));
+                    break;
+                }
+                case DataType::VARCHAR: {
+                    record.emplace_back(StringValue::Get(val));
+                    break;
+                }
+                }
+            }
+        }
+        duckdb_table.emplace_back(std::move(record));
+    }
+    auto result_table = Table::from_columnar(results);
+    sort(duckdb_table);
+    sort(result_table.table());
+    return duckdb_table != result_table.table();
+}
+
 void run(const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
     std::string_view                                                      name,
     std::string                                                           sql,
     const json&                                                           plan_json) {
-    hsql::SQLParserResult sql_result;
-    hsql::SQLParser::parse(sql, &sql_result);
-
-    if (not sql_result.isValid()) {
-        throw std::runtime_error(fmt::format("Error parsing SQL: {}", name));
-    }
-
-    std::unordered_map<std::string, int>              table_counts;
-    AliasMapType                                      alias_map;
-    JoinGraphType                                     join_graph;
-    FilterMapType                                     filters;
-    OutputAttrsType                                   output_attrs;
-    ColumnMapType                                     column_map;
-    std::vector<std::tuple<TableEntity, std::string>> column_vec;
-    auto statement = (const hsql::SelectStatement*)sql_result.getStatement(0);
-
-    auto fromTable = statement->fromTable;
-    if (fromTable->type != hsql::kTableCrossProduct) {
-        throw std::runtime_error("SQL not supported");
-    }
-    auto   fromTableList = fromTable->list;
-    size_t column_count  = 0;
-    for (auto table: *fromTableList) {
-        if (table->type != hsql::kTableName) {
-            throw std::runtime_error("SQL not supported");
-        }
-        auto table_itr = table_counts.find(table->name);
-        if (table_itr == table_counts.end()) {
-            bool _;
-            std::tie(table_itr, _) = table_counts.emplace(table->name, 1);
-        } else {
-            ++(table_itr->second);
-        }
-        TableEntity entity{table->name, table_itr->second - 1};
-        auto [itr, _] = column_map.emplace(entity, std::unordered_map<std::string, size_t>{});
-        if (auto attr_itr = attributes_map.find(entity.table);
-            attr_itr != attributes_map.end()) {
-            for (auto& attr: attr_itr->second) {
-                itr->second.emplace(attr.name, column_count++);
-                column_vec.emplace_back(entity, attr.name);
-            }
-        } else {
-            throw std::runtime_error(fmt::format("No table: {} in schema", entity.table));
-        }
-        auto alias = table->alias;
-        if (alias) {
-            alias_map.emplace(alias->name, entity);
-        }
-    }
-
-    auto& selectList = *statement->selectList;
-    for (auto* expr: selectList) {
-        switch (expr->type) {
-        case (hsql::kExprFunctionRef): {
-            for (auto* child: *expr->exprList) {
-                // fmt::println("Child: {}", child->type);
-                if (child->type != hsql::kExprColumnRef) {
-                    throw std::runtime_error("Complex select expressions are not supported");
-                }
-                auto [column, entity] =
-                    extract_column_and_table(child, table_counts, column_to_tables, alias_map);
-                output_attrs.emplace_back(entity, column);
-            }
-            break;
-        }
-        default: {
-            throw std::runtime_error(
-                fmt::format("Not supported expression type in select list: {}.", expr->type));
-            break;
-        }
-        }
-    }
-    auto condition = statement->whereClause;
-    DSU  join_union(column_count);
-    parse_expr(condition,
-        table_counts,
-        column_to_tables,
-        alias_map,
-        column_map,
-        filters,
-        join_union);
-
-    std::unordered_map<size_t, std::vector<size_t>> joined_columns;
-    for (size_t i = 0; i < column_count; ++i) {
-        auto set = join_union.find(i);
-        if (auto itr = joined_columns.find(set); itr != joined_columns.end()) {
-            itr->second.emplace_back(i);
-        } else {
-            joined_columns.emplace(set, std::vector<size_t>(1, i));
-        }
-    }
-
-    for (auto& [set, items]: joined_columns) {
-        for (size_t i = 0; i < items.size() - 1; ++i) {
-            for (auto j = i + 1; j < items.size(); ++j) {
-                auto& [left_entity, left_column]   = column_vec[items[i]];
-                auto& [right_entity, right_column] = column_vec[items[j]];
-                if (auto itr = join_graph.find(left_entity); itr != join_graph.end()) {
-                    if (auto iter = itr->second.find(right_entity); iter != itr->second.end()) {
-                        throw std::runtime_error(
-                            "At least two conditions between a same pair of tables.");
-                    }
-                    itr->second.emplace(right_entity, std::tuple{left_column, right_column});
-                } else {
-                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
-                        adj_item;
-                    adj_item.emplace(right_entity, std::tuple{left_column, right_column});
-                    join_graph.emplace(left_entity, std::move(adj_item));
-                }
-                if (auto itr = join_graph.find(right_entity); itr != join_graph.end()) {
-                    itr->second.emplace(left_entity, std::tuple{right_column, left_column});
-                } else {
-                    std::unordered_map<TableEntity, std::tuple<std::string, std::string>>
-                        adj_item;
-                    adj_item.emplace(left_entity, std::tuple{right_column, left_column});
-                    join_graph.emplace(right_entity, std::move(adj_item));
-                }
-            }
-        }
-    }
-
-    auto plan =
-        load_join_pipeline(plan_json["Plan"], alias_map, filters, join_graph, output_attrs);
+    ParsedSQL parsed_sql(column_to_tables);
+    parsed_sql.parse_sql(sql, name);
+    auto plan = load_join_pipeline(plan_json["Plan"], parsed_sql);
 
     auto start   = std::chrono::steady_clock::now();
     auto results = Contest::execute(plan);
     auto end     = std::chrono::steady_clock::now();
 
-    // auto result_table = Table::from_columnar(results);
-    // result_table.print();
-    fmt::println("{} results: {}, {}", name, results.num_rows, results.columns.size());
-    fmt::println("{}ms",
-        std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
+    auto executed_sql = parsed_sql.executed_sql(sql);
+    // fmt::println("{}", executed_sql);
+    using namespace duckdb;
+    DuckDB     db("imdb.db");
+    Connection conn(db);
+    auto       result = conn.Query(executed_sql);
+
+    fmt::println("{}: {}ms, {}", name, std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(), compare(*result, results));
+
+
+    // fmt::println("{} results: {}, {}", name, results.num_rows, results.columns.size());
+    // fmt::println("{}ms",
+    //     std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
 }
 
 int main(int argc, char* argv[]) {
