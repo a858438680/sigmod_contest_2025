@@ -182,7 +182,7 @@ ExecuteResult execute_impl(const Plan& plan, size_t node_idx) {
         node.data);
 }
 
-ColumnarTable execute(const Plan& plan) {
+ColumnarTable execute(const Plan& plan, [[maybe_unused]] void* context) {
     namespace views = ranges::views;
     auto ret        = execute_impl(plan, plan.root);
     auto ret_types  = plan.nodes[plan.root].output_attrs
@@ -191,5 +191,11 @@ ColumnarTable execute(const Plan& plan) {
     Table table{std::move(ret), std::move(ret_types)};
     return table.to_columnar();
 }
+
+void* build_context() {
+    return nullptr;
+}
+
+void destroy_context([[maybe_unused]] void* context) {}
 
 } // namespace Contest

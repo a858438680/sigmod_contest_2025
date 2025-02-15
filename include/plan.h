@@ -150,6 +150,9 @@ struct Plan {
 
 namespace Contest {
 
-ColumnarTable execute(const Plan& plan);
+void* build_context();
+void destroy_context(void*);
+
+ColumnarTable execute(const Plan& plan, void* context);
 
 }
