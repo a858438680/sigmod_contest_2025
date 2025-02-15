@@ -766,6 +766,12 @@ struct ParsedSQL {
                 }
                 break;
             }
+            case (hsql::kExprColumnRef): {
+                auto [column, entity] =
+                    extract_column_and_table(expr, table_counts, column_to_tables, alias_map);
+                output_attrs.emplace_back(entity, column);
+                break;
+            }
             default: {
                 throw std::runtime_error(
                     fmt::format("Not supported expression type in select list: {}.",
@@ -882,9 +888,10 @@ Plan load_join_pipeline(const json& node, const ParsedSQL& parsed_sql) {
 
     auto recurse = [&extract_entities,
                        &ret,
-                       &alias_map  = parsed_sql.alias_map,
-                       &join_graph = parsed_sql.join_graph,
-                       &filters    = parsed_sql.filters](auto&& recurse,
+                       &table_counts = parsed_sql.table_counts,
+                       &alias_map    = parsed_sql.alias_map,
+                       &join_graph   = parsed_sql.join_graph,
+                       &filters      = parsed_sql.filters](auto&& recurse,
                        const json& node,
                        const OutputAttrsType& required_attrs)
         -> std::tuple<size_t, std::vector<std::tuple<TableEntity, std::string, DataType>>> {
@@ -1029,15 +1036,34 @@ Plan load_join_pipeline(const json& node, const ParsedSQL& parsed_sql) {
                 std::move(output_attrs));
             return {new_node_id, std::move(output_columns)};
         } else if (auto itr = scan_types.find(node_type); itr != scan_types.end()) {
-            if (not node.contains("Alias")) {
-                throw std::runtime_error("No \"Alias\" in scan node");
-            }
-            auto        alias = node["Alias"].get<std::string>();
             TableEntity entity;
-            if (auto itr = alias_map.find(alias); itr != alias_map.end()) {
-                entity = itr->second;
+            if (not node.contains("Alias")) {
+                if (node.contains("Relation Name")) {
+                    auto relation_name = node["Relation Name"].get<std::string>();
+                    if (auto itr = table_counts.find(relation_name);
+                        itr != table_counts.end()) {
+                        if (itr->second == 1) {
+                            entity.table = relation_name;
+                            entity.id    = 0;
+                        } else {
+                            throw std::runtime_error(
+                                fmt::format("Table {} is used at least twice", relation_name));
+                        }
+                    } else {
+                        throw std::runtime_error(
+                            fmt::format("Cannot find table: {}", relation_name));
+                    }
+                } else {
+                    throw std::runtime_error(
+                        "Neither \"Alias\" nor \"Relation Name\" exists in scan node");
+                }
             } else {
-                throw std::runtime_error(fmt::format("Cannot find alias: {}", alias));
+                auto alias = node["Alias"].get<std::string>();
+                if (auto itr = alias_map.find(alias); itr != alias_map.end()) {
+                    entity = itr->second;
+                } else {
+                    throw std::runtime_error(fmt::format("Cannot find alias: {}", alias));
+                }
             }
             std::vector<Attribute>* pattributes;
             if (auto itr = attributes_map.find(entity.table); itr != attributes_map.end()) {
