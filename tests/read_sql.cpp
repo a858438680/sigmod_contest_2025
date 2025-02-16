@@ -1221,6 +1221,10 @@ void run(const std::unordered_map<std::string, std::vector<std::string>>& column
 int main(int argc, char* argv[]) {
     namespace views = ranges::views;
     try {
+        if (argc < 2) {
+            fmt::println(stderr, "{} <path to plans> [<name of selected sql>]", argv[0]);
+        }
+
         // column to table map
         std::unordered_map<std::string, std::vector<std::string>> column_to_tables;
 
@@ -1242,13 +1246,14 @@ int main(int argc, char* argv[]) {
         // load plan json
         namespace fs = std::filesystem;
 
-        File file("plans.json", "rb");
-        json query_plans = json::parse(file);
-        auto names       = query_plans["names"].get<std::vector<std::string>>();
-        auto plans       = query_plans["plans"];
+        File file(argv[1], "rb");
+        json query_plans   = json::parse(file);
+        auto sql_directory = query_plans["sql_directory"].get<std::string>();
+        auto names         = query_plans["names"].get<std::vector<std::string>>();
+        auto plans         = query_plans["plans"];
         for (const auto& [name, plan_json]: views::zip(names, plans)) {
-            if (argc < 2 or name == argv[1]) {
-                auto sql_path = fs::path("job") / fmt::format("{}.sql", name);
+            if (argc < 3 or name == argv[2]) {
+                auto sql_path = fs::path(sql_directory) / fmt::format("{}.sql", name);
                 auto sql      = read_file(sql_path);
                 run(column_to_tables, name, std::move(sql), plan_json, context);
             }
