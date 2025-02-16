@@ -15,7 +15,6 @@
 
 using json = nlohmann::json;
 
-// 属性查找表
 std::unordered_map<std::string, std::vector<Attribute>> attributes_map = {
     {"aka_name",
      {{DataType::INT32, "id"},

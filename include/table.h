@@ -46,7 +46,6 @@ public:
     static void print(const std::vector<std::vector<Data>>& data) {
         namespace views = ranges::views;
 
-        // 定义转义字符串的lambda
         auto escape_string = [](const std::string& s) {
             std::string escaped;
             for (char c: s) {
