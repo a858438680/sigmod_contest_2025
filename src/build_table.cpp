@@ -81,40 +81,59 @@ public:
 
 template <class F>
 TableParser(const std::vector<Attribute>& attributes,
-    F&&                          functor_,
-    char                         escape = '"',
-    char sep                            = ',',
-    bool has_trailing_comma             = false,
-    bool has_header                     = false) -> TableParser<std::decay_t<F>>;
+    F&&                                   functor_,
+    char                                  escape = '"',
+    char sep                                     = ',',
+    bool has_trailing_comma                      = false,
+    bool has_header                              = false) -> TableParser<std::decay_t<F>>;
 
 char buffer[1024 * 1024];
 
+std::unordered_map<std::filesystem::path, std::vector<std::vector<Data>>> table_cache;
+
 Table Table::from_csv(const std::vector<Attribute>& attributes,
-    const std::filesystem::path&           path,
-    Statement*                             filter,
-    bool                                   header) {
+    const std::filesystem::path&                    path,
+    Statement*                                      filter,
+    bool                                            header) {
     std::vector<std::vector<Data>> filtered_table;
-    File                           fp(path, "rb");
-    auto add_record = [&filtered_table, attributes, filter](std::vector<Data>&& record) {
-        if (not filter or filter->eval(attributes, record)) {
-            filtered_table.emplace_back(std::move(record));
-        }
-    };
-    TableParser parser(attributes, std::move(add_record), '\\', ',', false, header);
-    while (true) {
-        auto bytes_read = fread(buffer, 1, sizeof(buffer), fp);
-        if (bytes_read != 0) {
-            auto err = parser.execute(buffer, bytes_read);
-            if (err != CSVParser::Ok) {
-                throw std::runtime_error("CSV parse error");
-            }
+    if (auto itr = table_cache.find(path); itr != table_cache.end()) {
+        const auto& full_table = itr->second;
+        if (not filter) {
+            filtered_table = full_table;
         } else {
-            break;
+            for (auto& record: full_table) {
+                if (filter->eval(attributes, record)) {
+                    filtered_table.emplace_back(record);
+                }
+            }
         }
-    }
-    auto err = parser.finish();
-    if (err != CSVParser::Ok) {
-        throw std::runtime_error("CSV parse error");
+    } else {
+        std::vector<std::vector<Data>> full_table;
+        File                           fp(path, "rb");
+        auto add_record = [&full_table, &filtered_table, attributes, filter](
+                              std::vector<Data>&& record) {
+            full_table.emplace_back(record);
+            if (not filter or filter->eval(attributes, record)) {
+                filtered_table.emplace_back(std::move(record));
+            }
+        };
+        TableParser parser(attributes, std::move(add_record), '\\', ',', false, header);
+        while (true) {
+            auto bytes_read = fread(buffer, 1, sizeof(buffer), fp);
+            if (bytes_read != 0) {
+                auto err = parser.execute(buffer, bytes_read);
+                if (err != CSVParser::Ok) {
+                    throw std::runtime_error("CSV parse error");
+                }
+            } else {
+                break;
+            }
+        }
+        auto err = parser.finish();
+        if (err != CSVParser::Ok) {
+            throw std::runtime_error("CSV parse error");
+        }
+        table_cache.emplace(path, full_table);
     }
     Table table;
     table.set_attributes(attributes);
@@ -488,6 +507,105 @@ ColumnarTable Table::to_columnar() const {
             }
             break;
         }
+        }
+    }
+    return ret;
+}
+
+void Table::cache(const std::filesystem::path& path,
+    const std::vector<std::vector<Data>>&      data_,
+    size_t                                     num_cols) {
+    File   f(path, "wb");
+    size_t num_rows = data_.size();
+    fwrite(&num_rows, sizeof(num_rows), 1, f);
+    fwrite(&num_cols, sizeof(num_cols), 1, f);
+    for (size_t i = 0; i < num_rows; ++i) {
+        std::vector<uint8_t> row_bitmap;
+        for (size_t j = 0; j < num_cols; ++j) {
+            std::visit(
+                [&row_bitmap, j](const auto& value) {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (std::is_same_v<T, std::monostate>) {
+                        unset_bitmap(row_bitmap, j);
+                    } else {
+                        set_bitmap(row_bitmap, j);
+                    }
+                },
+                data_[i][j]);
+        }
+        fwrite(row_bitmap.data(), 1, row_bitmap.size(), f);
+        for (size_t j = 0; j < num_cols; ++j) {
+            std::visit(
+                [&row_bitmap, j, &f](const auto& value) {
+                    using T = std::decay_t<decltype(value)>;
+                    if constexpr (std::is_same_v<T, int32_t> or std::is_same_v<T, int64_t>
+                                  or std::is_same_v<T, double>) {
+                        fwrite(&value, sizeof(T), 1, f);
+                    } else if constexpr (std::is_same_v<T, std::string>) {
+                        size_t len = value.size();
+                        fwrite(&len, sizeof(len), 1, f);
+                        fwrite(value.data(), 1, value.size(), f);
+                    } else {
+                        // std::monostate, do nothing.
+                    }
+                },
+                data_[i][j]);
+        }
+    }
+}
+
+std::vector<std::vector<Data>> Table::load_cache(const std::filesystem::path& path,
+    const std::vector<Attribute>&                                             attributes,
+    const Statement*                                                          filter) {
+    File   f(path, "rb");
+    size_t num_rows;
+    size_t num_cols;
+    std::ignore = fread(&num_rows, sizeof(num_rows), 1, f);
+    std::ignore = fread(&num_cols, sizeof(num_cols), 1, f);
+    std::vector<std::vector<Data>> ret;
+    ret.reserve(num_rows);
+    for (size_t i = 0; i < num_rows; ++i) {
+        std::vector<uint8_t> row_bitmap((num_cols + 7) / 8);
+        std::ignore = fread(row_bitmap.data(), 1, row_bitmap.size(), f);
+        std::vector<Data> record;
+        record.reserve(num_cols);
+        for (size_t j = 0; j < num_cols; ++j) {
+            if (get_bitmap(row_bitmap.data(), j)) {
+                switch (attributes[j].type) {
+                case DataType::INT32: {
+                    int32_t value;
+                    std::ignore = fread(&value, sizeof(value), 1, f);
+                    record.emplace_back(value);
+                    break;
+                }
+                case DataType::INT64: {
+                    int64_t value;
+                    std::ignore = fread(&value, sizeof(value), 1, f);
+                    record.emplace_back(value);
+                    break;
+                }
+                case DataType::FP64: {
+                    double value;
+                    std::ignore = fread(&value, sizeof(value), 1, f);
+                    record.emplace_back(value);
+                    break;
+                }
+                case DataType::VARCHAR: {
+                    size_t      len;
+                    std::string value;
+                    std::ignore = fread(&len, sizeof(len), 1, f);
+                    value.resize(len);
+                    std::ignore = fread(value.data(), 1, value.size(), f);
+                    record.emplace_back(value);
+                    break;
+                }
+                }
+            } else {
+                record.emplace_back(std::monostate{});
+            }
+        }
+        if (filter->eval(attributes, record)) {
+            ret.emplace_back(std::move(record));
         }
     }
     return ret;

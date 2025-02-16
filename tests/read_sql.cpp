@@ -1136,16 +1136,13 @@ bool compare(duckdb::MaterializedQueryResult& duckdb_results, const ColumnarTabl
     auto num_rows = results.num_rows;
     auto num_cols = results.columns.size();
     if (duckdb_results.RowCount() != num_rows) {
-        fmt::println("different rows");
         return false;
     }
     if (duckdb_results.ColumnCount() != num_cols) {
-        fmt::println("different cols");
         return false;
     }
     for (size_t i = 0; i < num_cols; ++i) {
         if (not equal(duckdb_results.types[i], results.columns[i].type)) {
-            fmt::println("different type: {}", i);
             return false;
         }
     }
@@ -1211,11 +1208,6 @@ void run(const std::unordered_map<std::string, std::vector<std::string>>& column
         name,
         std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count(),
         compare(*result, results));
-
-
-    // fmt::println("{} results: {}, {}", name, results.num_rows, results.columns.size());
-    // fmt::println("{}ms",
-    //     std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count());
 }
 
 int main(int argc, char* argv[]) {

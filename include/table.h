@@ -25,6 +25,14 @@ public:
 
     ColumnarTable to_columnar() const;
 
+    static void cache(const std::filesystem::path& path,
+        const std::vector<std::vector<Data>>&      data,
+        size_t                                     num_cols);
+
+    static std::vector<std::vector<Data>> load_cache(const std::filesystem::path& path,
+        const std::vector<Attribute>&                                             attributes,
+        const Statement*                                                          filter);
+
     const std::vector<std::vector<Data>>& table() const { return data_; }
 
     std::vector<std::vector<Data>>& table() { return data_; }
