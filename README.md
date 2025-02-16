@@ -2,10 +2,17 @@
 
 ## Task
 
-Given the joining pipeline and the pre-filtered input data, your task is to implement an efficient joining algorithm to accelerate the execution time of the joining pipeline. Specifically, you need to implement the following function:
+Given the joining pipeline and the pre-filtered input data, your task is to implement an efficient joining algorithm to accelerate the execution time of the joining pipeline. Specifically, you need to implement the following function in `src/execute.cpp`:
 
 ```C++
-ColumnarTable execute(const Plan& plan);
+ColumnarTable execute(const Plan& plan, void* context);
+```
+
+Optionally, you can implement these two functions as well to prepare any global context (e.g., thread pool) to accelerate the execution.
+
+```C++
+void* build_context();
+void destroy_context(void*);
 ```
 
 ### Input format
