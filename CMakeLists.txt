@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.29)
+cmake_minimum_required(VERSION 3.17)
 
 project(SigmodContest)
 
@@ -7,13 +7,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 Include(FetchContent)
-
-FetchContent_Declare(
-    Catch2
-    URL https://github.com/catchorg/Catch2/archive/refs/tags/v3.8.0.tar.gz
-)
-
-FetchContent_MakeAvailable(Catch2)
 
 FetchContent_Declare(
     abseil
@@ -65,20 +58,14 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(duckdb)
 
-add_library(contest
-    STATIC
+add_executable(run
     src/build_table.cpp
     src/csv_parser.cpp
     src/statement.cpp
     src/execute.cpp
-)
-
-target_include_directories(contest PUBLIC include)
-target_link_libraries(contest PUBLIC re2 fmt range-v3)
-target_compile_definitions(contest PUBLIC -D_CRT_SECURE_NO_WARNINGS)
-
-add_executable(
-    read_sql
     tests/read_sql.cpp
 )
-target_link_libraries(read_sql PRIVATE contest nlohmann_json::nlohmann_json sqlparser duckdb)
+
+target_include_directories(run PRIVATE include)
+target_link_libraries(run PRIVATE re2 fmt range-v3 nlohmann_json::nlohmann_json sqlparser duckdb)
+target_compile_definitions(run PRIVATE -D_CRT_SECURE_NO_WARNINGS)
