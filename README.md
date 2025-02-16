@@ -99,7 +99,38 @@ A `ColumnarTable` first stores how many rows the table has in the `num_rows` mem
 
 ## Quick start
 
+> [!TIP]
+> Run all the following commands in the root directory of this project.
+
+First, download the imdb dataset.
+
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+./download_imdb.sh
+```
+
+Second, build the project.
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -Wno-dev
 cmake --build build -- -j $(nproc)
 ```
+
+Third, prepare the DuckDB database for correctness checking.
+
+```bash
+./build/build_database imdb.db
+```
+
+Now, you can run the tests:
+```bash
+./build/run plans.json
+```
+> [!TIP]
+> If you want to use `Ninja Multi-Config` as the generator. The commands will look like:
+> 
+>```bash
+> cmake -S . -B build -Wno-dev -G "Ninja Multi-Config"
+> cmake --build build --config Release -- -j $(nproc)
+> ./build/Release/build_database imdb.db
+> ./build/Release/run plans.json
+> ```
