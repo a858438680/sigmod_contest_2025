@@ -69,3 +69,11 @@ add_executable(run
 target_include_directories(run PRIVATE include)
 target_link_libraries(run PRIVATE re2 fmt range-v3 nlohmann_json::nlohmann_json sqlparser duckdb)
 target_compile_definitions(run PRIVATE -D_CRT_SECURE_NO_WARNINGS)
+
+add_executable(build_database
+    tests/build_database.cpp
+)
+
+target_include_directories(build_database PRIVATE include)
+target_link_libraries(build_database PRIVATE fmt duckdb)
+target_compile_definitions(build_database PRIVATE -D_CRT_SECURE_NO_WARNINGS)
