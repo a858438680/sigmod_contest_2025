@@ -100,7 +100,7 @@ struct Column {
 };
 
 struct ColumnarTable {
-    size_t              num_rows;
+    size_t              num_rows{0};
     std::vector<Column> columns;
 };
 
@@ -151,8 +151,8 @@ struct Plan {
 namespace Contest {
 
 void* build_context();
-void destroy_context(void*);
+void  destroy_context(void*);
 
 ColumnarTable execute(const Plan& plan, void* context);
 
-}
+} // namespace Contest

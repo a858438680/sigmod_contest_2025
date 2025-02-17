@@ -9,6 +9,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 Include(FetchContent)
 
 FetchContent_Declare(
+    Catch2
+    URL https://github.com/catchorg/Catch2/archive/refs/tags/v3.8.0.tar.gz
+)
+
+FetchContent_MakeAvailable(Catch2)
+
+FetchContent_Declare(
     abseil
     URL https://github.com/abseil/abseil-cpp/releases/download/20240722.1/abseil-cpp-20240722.1.tar.gz
 )
@@ -77,3 +84,15 @@ add_executable(build_database
 target_include_directories(build_database PRIVATE include)
 target_link_libraries(build_database PRIVATE fmt duckdb)
 target_compile_definitions(build_database PRIVATE -D_CRT_SECURE_NO_WARNINGS)
+
+add_executable(
+    unit_tests
+    src/build_table.cpp
+    src/csv_parser.cpp
+    src/execute.cpp
+    tests/unit_tests.cpp
+)
+
+target_include_directories(unit_tests PRIVATE include)
+target_link_libraries(unit_tests PRIVATE range-v3 fmt Catch2::Catch2WithMain duckdb)
+target_compile_definitions(unit_tests PRIVATE -D_CRT_SECURE_NO_WARNINGS)
