@@ -82,7 +82,7 @@ struct Comparison: Statement {
     }
 
     bool eval(const std::vector<Attribute>& attributes,
-        const std::vector<Data>&                    record) const override;
+        const std::vector<Data>&            record) const override;
 
 private:
     std::string opToString() const {
@@ -257,7 +257,7 @@ struct LogicalOperation: Statement {
     }
 
     bool eval(const std::vector<Attribute>& attributes,
-        const std::vector<Data>&                    record) const override;
+        const std::vector<Data>&            record) const override;
 };
 
 class Lexer {
@@ -410,38 +410,3 @@ public:
         return tokens;
     }
 };
-
-class Parser {
-    std::vector<Token> tokens;
-    size_t             pos = 0;
-
-    const Token& current() const { return tokens[pos]; }
-
-    void consume() { pos = std::min(pos + 1, tokens.size()); }
-
-    Comparison::Op convertCompareOp(Token::Type type) {
-        switch (type) {
-        case Token::EQ:  return Comparison::EQ;
-        case Token::NEQ: return Comparison::NEQ;
-        case Token::LT:  return Comparison::LT;
-        case Token::GT:  return Comparison::GT;
-        case Token::LEQ: return Comparison::LEQ;
-        case Token::GEQ: return Comparison::GEQ;
-        default:         throw std::runtime_error("Invalid comparison operator");
-        }
-    }
-
-    std::unique_ptr<Statement>  parseOr();
-    std::unique_ptr<Statement>  parseAnd();
-    std::unique_ptr<Statement>  parseNot();
-    std::unique_ptr<Statement>  parseFactor();
-    std::unique_ptr<Comparison> parseComparison();
-
-public:
-    Parser(std::vector<Token> tokens)
-    : tokens(std::move(tokens)) {}
-
-    std::unique_ptr<Statement> parse() { return parseOr(); }
-};
-
-std::unique_ptr<Statement> build_statement(std::string input);
