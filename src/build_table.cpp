@@ -102,7 +102,7 @@ Table Table::from_csv(const std::vector<Attribute>& attributes,
             filtered_table = full_table;
         } else {
             for (auto& record: full_table) {
-                if (filter->eval(attributes, record)) {
+                if (filter->eval(record)) {
                     filtered_table.emplace_back(record);
                 }
             }
@@ -113,7 +113,7 @@ Table Table::from_csv(const std::vector<Attribute>& attributes,
         auto add_record = [&full_table, &filtered_table, attributes, filter](
                               std::vector<Data>&& record) {
             full_table.emplace_back(record);
-            if (not filter or filter->eval(attributes, record)) {
+            if (not filter or filter->eval(record)) {
                 filtered_table.emplace_back(std::move(record));
             }
         };
@@ -604,7 +604,7 @@ std::vector<std::vector<Data>> Table::load_cache(const std::filesystem::path& pa
                 record.emplace_back(std::monostate{});
             }
         }
-        if (filter->eval(attributes, record)) {
+        if (not filter or filter->eval(record)) {
             ret.emplace_back(std::move(record));
         }
     }

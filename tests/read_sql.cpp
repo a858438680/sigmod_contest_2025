@@ -306,6 +306,23 @@ insert_filter(FilterMapType& filters, TableEntity entity, std::unique_ptr<Statem
     }
 }
 
+size_t column_idx(const std::string& column, const TableEntity& entity) {
+    namespace views = ranges::views;
+    auto& table     = entity.table;
+    if (auto itr = attributes_map.find(table); itr != attributes_map.end()) {
+        auto& attributes = itr->second;
+        for (auto&& [idx, attr]: attributes | views::enumerate) {
+            if (attr.name == column) {
+                return idx;
+            }
+        }
+        throw std::runtime_error(
+            fmt::format("Cannot find column {} in table {}", column, table));
+    } else {
+        throw std::runtime_error(fmt::format("Cannot find table {}", table));
+    }
+}
+
 void parse_expr_impl(hsql::Expr*                                     expr,
     const std::unordered_map<std::string, int>&                      table_counts,
     const std::unordered_map<std::string, std::vector<std::string>>& column_to_tables,
@@ -487,7 +504,9 @@ void parse_expr_impl(hsql::Expr*                                     expr,
             }
             if (right->type != hsql::kExprColumnRef) {
                 out_statement =
-                    std::make_unique<Comparison>(std::move(left_column), op, std::move(value));
+                    std::make_unique<Comparison>(column_idx(left_column, left_entity),
+                        op,
+                        std::move(value));
                 out_entity = std::move(left_entity);
             }
             break;
@@ -514,7 +533,9 @@ void parse_expr_impl(hsql::Expr*                                     expr,
                 // fmt::println("string literal: {}", right->name);
                 Literal value = right->name;
                 out_statement =
-                    std::make_unique<Comparison>(std::move(left_column), op, std::move(value));
+                    std::make_unique<Comparison>(column_idx(left_column, left_entity),
+                        op,
+                        std::move(value));
                 out_entity = std::move(left_entity);
                 break;
             }
@@ -551,10 +572,10 @@ void parse_expr_impl(hsql::Expr*                                     expr,
                         fmt::format("Expression type: {} not processed", item->type));
                 }
             }
-            auto stmt1    = std::make_unique<Comparison>(left_column,
+            auto stmt1    = std::make_unique<Comparison>(column_idx(left_column, left_entity),
                 Comparison::Op::GEQ,
                 std::move(values[0]));
-            auto stmt2    = std::make_unique<Comparison>(left_column,
+            auto stmt2    = std::make_unique<Comparison>(column_idx(left_column, left_entity),
                 Comparison::Op::LEQ,
                 std::move(values[1]));
             out_statement = LogicalOperation::makeAnd(std::move(stmt1), std::move(stmt2));
@@ -588,13 +609,15 @@ void parse_expr_impl(hsql::Expr*                                     expr,
                         fmt::format("Expression type: {} not processed", item->type));
                 }
                 if (not out_statement) {
-                    out_statement = std::make_unique<Comparison>(left_column,
-                        Comparison::Op::EQ,
-                        std::move(value));
+                    out_statement =
+                        std::make_unique<Comparison>(column_idx(left_column, left_entity),
+                            Comparison::Op::EQ,
+                            std::move(value));
                 } else {
-                    auto new_stmt = std::make_unique<Comparison>(left_column,
-                        Comparison::Op::EQ,
-                        std::move(value));
+                    auto new_stmt =
+                        std::make_unique<Comparison>(column_idx(left_column, left_entity),
+                            Comparison::Op::EQ,
+                            std::move(value));
                     out_statement =
                         LogicalOperation::makeOr(std::move(out_statement), std::move(new_stmt));
                 }
@@ -610,7 +633,7 @@ void parse_expr_impl(hsql::Expr*                                     expr,
                 extract_column_and_table(child, table_counts, column_to_tables, alias_map);
             // fmt::println("child_column: {}", child_column);
             // fmt::println("child_table: {}", child_table);
-            out_statement = std::make_unique<Comparison>(std::move(child_column),
+            out_statement = std::make_unique<Comparison>(column_idx(child_column, child_entity),
                 Comparison::Op::IS_NULL,
                 std::monostate{});
             out_entity    = std::move(child_entity);

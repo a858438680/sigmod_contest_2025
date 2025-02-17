@@ -1,12 +1,11 @@
 #pragma once
 
-#include <algorithm>
-#include <fmt/core.h>
 #include <mutex>
 #include <string>
 #include <variant>
 #include <vector>
 
+#include <fmt/core.h>
 #include <re2/re2.h>
 
 using Data    = std::variant<int32_t, int64_t, double, std::string, std::monostate>;
@@ -17,44 +16,15 @@ struct Statement;
 struct Comparison;
 struct LogicalOperation;
 
-struct Token {
-    enum Type {
-        LPAREN,
-        RPAREN,
-        AND,
-        OR,
-        NOT,
-        EQ,
-        NEQ,
-        LT,
-        GT,
-        LEQ,
-        GEQ,
-        LIKE,
-        IS,
-        NULL_VAL,
-        IDENTIFIER,
-        LITERAL_STRING,
-        LITERAL_INT,
-        LITERAL_FLOAT,
-        EOI
-    };
-
-    Type        type;
-    std::string lexeme;
-    Literal     value;
-};
-
 // AST Node
 struct Statement {
-    virtual ~Statement()                                   = default;
-    virtual std::string pretty_print(int indent = 0) const = 0;
-    virtual bool        eval(const std::vector<Attribute>& attributes,
-               const std::vector<Data>&                    record) const      = 0;
+    virtual ~Statement()                                            = default;
+    virtual std::string pretty_print(int indent = 0) const          = 0;
+    virtual bool        eval(const std::vector<Data>& record) const = 0;
 };
 
 struct Comparison: Statement {
-    std::string column;
+    size_t column;
 
     enum Op {
         EQ,
@@ -72,8 +42,8 @@ struct Comparison: Statement {
     Op      op;
     Literal value;
 
-    Comparison(std::string col, Op o, Literal val)
-    : column(std::move(col))
+    Comparison(size_t col, Op o, Literal val)
+    : column(col)
     , op(o)
     , value(std::move(val)) {}
 
@@ -81,8 +51,7 @@ struct Comparison: Statement {
         return fmt::format("{:{}}{} {} {}", "", indent, column, opToString(), valueToString());
     }
 
-    bool eval(const std::vector<Attribute>& attributes,
-        const std::vector<Data>&            record) const override;
+    bool eval(const std::vector<Data>& record) const override;
 
 private:
     std::string opToString() const {
@@ -256,157 +225,5 @@ struct LogicalOperation: Statement {
         return result;
     }
 
-    bool eval(const std::vector<Attribute>& attributes,
-        const std::vector<Data>&            record) const override;
-};
-
-class Lexer {
-    std::string input;
-    size_t      pos = 0;
-
-    char peek() const { return pos < input.size() ? input[pos] : '\0'; }
-
-    void consume() {
-        if (pos < input.size()) {
-            ++pos;
-        }
-    }
-
-    std::string readIdentifier() {
-        size_t start = pos;
-        while (isalnum(peek()) || peek() == '_') {
-            consume();
-        }
-        return input.substr(start, pos - start);
-    }
-
-    std::string readString() {
-        consume(); // skip begin
-        size_t start = pos;
-        while (peek() != '\'') {
-            if (peek() == '\0') {
-                throw std::runtime_error("Unclosed std::string");
-            }
-            consume();
-        }
-        std::string str = input.substr(start, pos - start);
-        consume(); // skip end
-        return str;
-    }
-
-    struct NumberInfo {
-        std::string lexeme;
-        bool        is_float;
-        int         ivalue;
-        double      dvalue;
-    };
-
-    NumberInfo readNumber() {
-        size_t start   = pos;
-        bool   has_dot = false;
-        while (isdigit(peek()) || peek() == '.') {
-            if (peek() == '.') {
-                if (has_dot) {
-                    throw std::runtime_error("Invalid number");
-                }
-                has_dot = true;
-            }
-            consume();
-        }
-        std::string lexeme = input.substr(start, pos - start);
-
-        try {
-            if (has_dot) {
-                return {lexeme, true, 0, stod(lexeme)};
-            } else {
-                return {lexeme, false, stoi(lexeme), 0.0};
-            }
-        } catch (...) {
-            throw std::runtime_error("Invalid number format");
-        }
-    }
-
-public:
-    Lexer(std::string input)
-    : input(std::move(input)) {}
-
-    std::vector<Token> tokenize() {
-        std::vector<Token> tokens;
-        while (pos < input.size()) {
-            char c = peek();
-            if (isspace(c)) {
-                consume();
-                continue;
-            }
-
-            if (c == '(') {
-                tokens.push_back({Token::LPAREN, "(", {}});
-                consume();
-            } else if (c == ')') {
-                tokens.push_back({Token::RPAREN, ")", {}});
-                consume();
-            } else if (isalpha(c)) {
-                std::string ident = readIdentifier();
-                std::string upper_ident;
-                transform(ident.begin(), ident.end(), back_inserter(upper_ident), ::toupper);
-
-                if (upper_ident == "AND") {
-                    tokens.push_back({Token::AND, "AND", {}});
-                } else if (upper_ident == "OR") {
-                    tokens.push_back({Token::OR, "OR", {}});
-                } else if (upper_ident == "NOT") {
-                    tokens.push_back({Token::NOT, "NOT", {}});
-                } else if (upper_ident == "LIKE") {
-                    tokens.push_back({Token::LIKE, "LIKE", {}});
-                } else if (upper_ident == "IS") {
-                    tokens.push_back({Token::IS, "IS", {}});
-                } else if (upper_ident == "NULL") {
-                    tokens.push_back({Token::NULL_VAL, "NULL", std::monostate{}});
-                } else {
-                    tokens.push_back({Token::IDENTIFIER, ident, {}});
-                }
-            } else if (c == '\'') {
-                std::string str = readString();
-                tokens.push_back({Token::LITERAL_STRING, str, str});
-            } else if (isdigit(c) || c == '.') {
-                auto num = readNumber();
-                if (num.is_float) {
-                    tokens.push_back({Token::LITERAL_FLOAT, num.lexeme, num.dvalue});
-                } else {
-                    tokens.push_back({Token::LITERAL_INT, num.lexeme, num.ivalue});
-                }
-            } else if (c == '=') {
-                tokens.push_back({Token::EQ, "=", {}});
-                consume();
-            } else if (c == '<') {
-                consume();
-                if (peek() == '=') {
-                    tokens.push_back({Token::LEQ, "<=", {}});
-                    consume();
-                } else {
-                    tokens.push_back({Token::LT, "<", {}});
-                }
-            } else if (c == '>') {
-                consume();
-                if (peek() == '=') {
-                    tokens.push_back({Token::GEQ, ">=", {}});
-                    consume();
-                } else {
-                    tokens.push_back({Token::GT, ">", {}});
-                }
-            } else if (c == '!') {
-                consume();
-                if (peek() == '=') {
-                    tokens.push_back({Token::NEQ, "!=", {}});
-                    consume();
-                } else {
-                    throw std::runtime_error("Invalid operator !");
-                }
-            } else {
-                throw std::runtime_error(std::string("Unexpected character: ") + c);
-            }
-        }
-        tokens.push_back({Token::EOI, "", {}});
-        return tokens;
-    }
+    bool eval(const std::vector<Data>& record) const override;
 };
